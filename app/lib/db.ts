@@ -31,3 +31,7 @@ export function getSql() {
 
   return neon(databaseUrl);
 }
+
+export function isDatabaseConfigError(error: unknown) {
+  return error instanceof Error && error.message === "Database connection string is missing.";
+}

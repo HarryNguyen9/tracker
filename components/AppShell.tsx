@@ -1,16 +1,26 @@
 "use client";
 
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
-import { formatDate, formatNumber, formatVnd } from "../app/lib/format";
+import { formatDate, formatMoney, formatNumber } from "../app/lib/format";
 import type { PlayerSummary, RecordWithBalance, ResultType } from "../app/lib/types";
 
 type LoadState = "idle" | "loading" | "ready" | "error";
 type RecordDraft = { amount: string; rate: string; note: string };
 type PendingUnlockAction = "player" | "record" | "confirm" | null;
+type PendingDelete = { type: "player"; player: PlayerSummary } | { type: "record"; record: RecordWithBalance } | null;
 
 const emptyRecordDraft: RecordDraft = { amount: "", rate: "", note: "" };
 const resultLabels: Record<ResultType, string> = { win: "Win", loss: "Loss", draw: "Draw" };
 const resultOptions: ResultType[] = ["win", "loss", "draw"];
+
+function getExpectedReturn(amount: number, rate: number) {
+  return amount * rate;
+}
+
+function parseDraftNumber(value: string) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
 
 class ApiError extends Error {
   status: number;
@@ -52,21 +62,27 @@ export default function AppShell() {
   const [pin, setPin] = useState("");
   const [pinError, setPinError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [darkMode, setDarkMode] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete>(null);
+  const [expandedRecordId, setExpandedRecordId] = useState<string | null>(null);
 
   const selectedPlayer = players.find((player) => player.id === selectedId) ?? null;
+  const draftExpectedReturn = getExpectedReturn(parseDraftNumber(draft.amount), parseDraftNumber(draft.rate));
   const totalSummary = useMemo(
     () => ({
-      amount: players.reduce((sum, player) => sum + player.totalAmount, 0),
-      valueReturn: players.reduce((sum, player) => sum + player.totalReturn, 0),
-      profit: players.reduce((sum, player) => sum + player.totalProfit, 0),
-      finalizedCount: players.reduce((sum, player) => sum + player.finalizedRecordCount, 0),
-      pendingCount: players.reduce((sum, player) => sum + player.pendingRecordCount, 0),
+      amount: selectedPlayer?.totalAmount ?? 0,
+      valueReturn: selectedPlayer?.totalReturn ?? 0,
+      profit: selectedPlayer?.totalProfit ?? 0,
+      finalizedCount: selectedPlayer?.finalizedRecordCount ?? 0,
+      pendingCount: selectedPlayer?.pendingRecordCount ?? 0,
     }),
-    [players],
+    [selectedPlayer],
   );
 
-  async function loadPlayers(nextSelectedId?: string | null) {
-    setLoadState("loading");
+  async function loadPlayers(nextSelectedId?: string | null, options: { silent?: boolean } = {}) {
+    if (!options.silent) {
+      setLoadState("loading");
+    }
     setError("");
     try {
       const data = await readJson<{ players: PlayerSummary[] }>(await fetch("/api/players"));
@@ -77,18 +93,20 @@ export default function AppShell() {
       setLoadState("ready");
     } catch (err) {
       console.error("Unable to load players", err);
-      setError("Unable to load data. Please try again.");
+      setError(err instanceof ApiError ? err.message : "Unable to load data. Please try again.");
       setLoadState("error");
     }
   }
 
-  async function loadRecords(playerId: string | null) {
+  async function loadRecords(playerId: string | null, options: { silent?: boolean } = {}) {
     if (!playerId) {
       setRecords([]);
       return;
     }
 
-    setRecordState("loading");
+    if (!options.silent) {
+      setRecordState("loading");
+    }
     setRecordError("");
     try {
       const data = await readJson<{ records: RecordWithBalance[] }>(await fetch(`/api/records?playerId=${playerId}`));
@@ -96,7 +114,7 @@ export default function AppShell() {
       setRecordState("ready");
     } catch (err) {
       console.error("Unable to load records", err);
-      setRecordError("Unable to load data. Please try again.");
+      setRecordError(err instanceof ApiError ? err.message : "Unable to load data. Please try again.");
       setRecordState("error");
     }
   }
@@ -105,6 +123,17 @@ export default function AppShell() {
     loadPlayers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const savedTheme = window.localStorage.getItem("tracker-theme");
+    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    setDarkMode(savedTheme ? savedTheme === "dark" : prefersDark);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", darkMode);
+    window.localStorage.setItem("tracker-theme", darkMode ? "dark" : "light");
+  }, [darkMode]);
 
   useEffect(() => {
     loadRecords(selectedId);
@@ -150,8 +179,7 @@ export default function AppShell() {
       }
       setPendingUnlockAction(null);
       setPendingConfirmRecordId(null);
-      await loadPlayers(selectedId);
-      await loadRecords(selectedId);
+      await Promise.all([loadPlayers(selectedId, { silent: true }), loadRecords(selectedId, { silent: true })]);
     } catch {
       setPinError("Invalid PIN.");
     } finally {
@@ -220,10 +248,22 @@ export default function AppShell() {
       openPinFor(null);
       return;
     }
-    if (!window.confirm(`Delete ${player.name} and all records?`)) return;
+    setPendingDelete({ type: "player", player });
+  }
+
+  async function confirmDelete() {
+    if (!pendingDelete) return;
+
+    const deleteTarget = pendingDelete;
     await runEdit(async () => {
-      await readJson(await fetch(`/api/players/${player.id}`, { method: "DELETE" }));
-      await loadPlayers(player.id === selectedId ? null : selectedId);
+      if (deleteTarget.type === "player") {
+        await readJson(await fetch(`/api/players/${deleteTarget.player.id}`, { method: "DELETE" }));
+        await loadPlayers(deleteTarget.player.id === selectedId ? null : selectedId);
+      } else {
+        await readJson(await fetch(`/api/records/${deleteTarget.record.id}`, { method: "DELETE" }));
+        await Promise.all([loadRecords(selectedId, { silent: true }), loadPlayers(selectedId, { silent: true })]);
+      }
+      setPendingDelete(null);
     });
   }
 
@@ -244,8 +284,7 @@ export default function AppShell() {
         }),
       );
       resetRecordForm();
-      await loadRecords(selectedId);
-      await loadPlayers(selectedId);
+      await Promise.all([loadRecords(selectedId, { silent: true }), loadPlayers(selectedId, { silent: true })]);
     });
   }
 
@@ -264,8 +303,7 @@ export default function AppShell() {
         }),
       );
       setConfirmingRecordId(null);
-      await loadRecords(selectedId);
-      await loadPlayers(selectedId);
+      await Promise.all([loadRecords(selectedId, { silent: true }), loadPlayers(selectedId, { silent: true })]);
     });
   }
 
@@ -274,12 +312,7 @@ export default function AppShell() {
       openPinFor("record");
       return;
     }
-    if (!window.confirm("Delete this record?")) return;
-    await runEdit(async () => {
-      await readJson(await fetch(`/api/records/${record.id}`, { method: "DELETE" }));
-      await loadRecords(selectedId);
-      await loadPlayers(selectedId);
-    });
+    setPendingDelete({ type: "record", record });
   }
 
   function startEditRecord(record: RecordWithBalance) {
@@ -302,16 +335,26 @@ export default function AppShell() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
-      <header className="rounded-[2rem] bg-ink p-6 text-white shadow-soft">
+    <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 px-4 py-5 text-ink transition-colors dark:text-slate-50 sm:px-6 lg:px-8">
+      <header className="rounded-[1.75rem] border border-emerald-400/10 bg-ink p-6 text-white shadow-soft dark:border-emerald-300/10 dark:bg-[#0f1815]">
         <div className="flex flex-wrap items-start gap-3">
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium uppercase tracking-[0.3em] text-emerald-200">Game Tracker</p>
             <h1 className="mt-3 text-3xl font-bold sm:text-5xl">Game Result Tracker</h1>
           </div>
-          <span className={`rounded-full px-4 py-2 text-sm font-bold ${editMode ? "bg-emerald-300 text-ink" : "bg-white/15 text-white"}`}>
-            {editMode ? "Edit Mode" : "Viewer Mode"}
-          </span>
+          <div className="flex items-center gap-2">
+            <button
+              aria-pressed={darkMode}
+              className="rounded-full bg-white/10 px-4 py-2 text-sm font-bold text-white transition hover:bg-white/15"
+              onClick={() => setDarkMode((current) => !current)}
+              type="button"
+            >
+              {darkMode ? "Light Mode" : "Dark Mode"}
+            </button>
+            <span className={`rounded-full px-4 py-2 text-sm font-bold ${editMode ? "bg-emerald-300 text-ink" : "bg-white/15 text-white"}`}>
+              {editMode ? "Edit Mode" : "Viewer Mode"}
+            </span>
+          </div>
         </div>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-emerald-50/80">
           Track Amount, Rate, Return, Profit, and Balance for every player in one simple mobile-first dashboard.
@@ -330,21 +373,21 @@ export default function AppShell() {
       {error ? <StateBox tone="error" text={error} /> : null}
 
       <section className="grid gap-3 sm:grid-cols-5">
-        <Metric label="Total Amount" value={formatVnd(totalSummary.amount)} />
-        <Metric label="Total Return" value={formatVnd(totalSummary.valueReturn)} />
-        <Metric label="Total Profit" value={formatVnd(totalSummary.profit)} positive={totalSummary.profit >= 0} />
+        <Metric label="Total Amount" value={formatMoney(totalSummary.amount)} />
+        <Metric label="Total Return" value={formatMoney(totalSummary.valueReturn)} />
+        <Metric label="Total Profit" value={formatMoney(totalSummary.profit)} positive={totalSummary.profit >= 0} />
         <Metric label="Finalized Records" value={formatNumber(totalSummary.finalizedCount)} />
         <Metric label="Pending Records" value={formatNumber(totalSummary.pendingCount)} />
       </section>
 
       <section className="grid gap-5 lg:grid-cols-[0.95fr_1.35fr]">
-        <div className="rounded-[1.75rem] bg-white p-4 shadow-soft">
+        <div className="rounded-[1.5rem] border border-white/80 bg-white/95 p-4 shadow-soft dark:border-white/10 dark:bg-[#121d19]/95">
           <div className="mb-4 flex items-center gap-3">
             <div>
               <h2 className="text-xl font-bold">Players</h2>
-              <p className="text-sm text-slate-500">Add players by name.</p>
+              <p className="text-sm text-slate-500 dark:text-slate-400">Add players by name.</p>
             </div>
-            {loadState === "loading" ? <span className="ml-auto text-sm text-slate-500">Loading...</span> : null}
+            {loadState === "loading" ? <span className="ml-auto text-sm text-slate-500 dark:text-slate-400">Loading...</span> : null}
           </div>
 
           <button
@@ -356,9 +399,9 @@ export default function AppShell() {
           </button>
 
           {addPlayerOpen && editMode ? (
-            <form className="mb-4 flex gap-2" onSubmit={createPlayer}>
+            <form className="mb-5 flex gap-2 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5" onSubmit={createPlayer}>
               <input
-                className="min-h-12 flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-4 outline-none focus:border-emerald-500"
+                className="min-h-12 flex-1 rounded-2xl border border-slate-200 bg-white px-4 outline-none focus:border-emerald-500 dark:border-white/10 dark:bg-[#0d1512]"
                 onChange={(event) => setPlayerName(event.target.value)}
                 placeholder="Player name"
                 value={playerName}
@@ -366,7 +409,7 @@ export default function AppShell() {
               <button className="rounded-2xl bg-ink px-4 font-bold text-white active:scale-95" disabled={busy} type="submit">
                 Save
               </button>
-              <button className="rounded-2xl bg-slate-100 px-4 font-bold" onClick={() => setAddPlayerOpen(false)} type="button">
+              <button className="rounded-2xl bg-slate-100 px-4 font-bold dark:bg-white/10" onClick={() => setAddPlayerOpen(false)} type="button">
                 Cancel
               </button>
             </form>
@@ -374,9 +417,9 @@ export default function AppShell() {
 
           {loadState === "error" && !error ? <StateBox tone="error" text="Unable to load data. Please try again." /> : null}
           {loadState !== "loading" && players.length === 0 ? (
-            <div className="rounded-3xl border border-dashed border-emerald-300 bg-mint p-6 text-center">
+            <div className="rounded-2xl border border-dashed border-emerald-300 bg-mint p-6 text-center dark:border-emerald-400/40 dark:bg-emerald-400/10">
               <p className="text-lg font-bold">No players yet</p>
-              <p className="mt-2 text-sm text-slate-600">Add your first player to start tracking game results.</p>
+              <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Add your first player to start tracking game results.</p>
               <button
                 className="mt-4 rounded-full bg-ink px-5 py-3 text-sm font-bold text-white"
                 onClick={() => requestEdit(() => setAddPlayerOpen(true), "player")}
@@ -387,10 +430,14 @@ export default function AppShell() {
             </div>
           ) : null}
 
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-4">
             {players.map((player) => (
               <article
-                className={`rounded-3xl border p-4 transition ${selectedId === player.id ? "border-emerald-500 bg-emerald-50" : "border-slate-100 bg-white"}`}
+                className={`rounded-2xl border p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
+                  selectedId === player.id
+                    ? "border-emerald-500 bg-emerald-50/90 dark:border-emerald-400 dark:bg-emerald-400/10"
+                    : "border-slate-200/80 bg-white dark:border-white/10 dark:bg-white/[0.03]"
+                }`}
                 key={player.id}
               >
                 <button className="w-full text-left" onClick={() => setSelectedId(player.id)} type="button">
@@ -398,14 +445,14 @@ export default function AppShell() {
                     <div>
                       {renamingId === player.id ? (
                         <input
-                          className="w-full rounded-xl border border-slate-200 px-3 py-2 font-bold"
+                          className="w-full rounded-xl border border-slate-200 px-3 py-2 font-bold dark:border-white/10 dark:bg-[#0d1512]"
                           onChange={(event) => setRenameValue(event.target.value)}
                           value={renameValue}
                         />
                       ) : (
                         <h3 className="text-lg font-bold">{player.name}</h3>
                       )}
-                      <p className="text-sm text-slate-500">
+                      <p className="text-sm text-slate-500 dark:text-slate-400">
                         {player.finalizedRecordCount} finalized, {player.pendingRecordCount} pending
                       </p>
                     </div>
@@ -413,10 +460,10 @@ export default function AppShell() {
                   </div>
                 </button>
                 <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
-                  <MiniMetric label="Amount" value={formatVnd(player.totalAmount)} />
-                  <MiniMetric label="Return" value={formatVnd(player.totalReturn)} />
-                  <MiniMetric label="Profit" value={formatVnd(player.totalProfit)} />
-                  <MiniMetric label="Balance" value={formatVnd(player.balance)} />
+                  <MiniMetric label="Amount" value={formatMoney(player.totalAmount)} />
+                  <MiniMetric label="Return" value={formatMoney(player.totalReturn)} />
+                  <MiniMetric label="Profit" value={formatMoney(player.totalProfit)} />
+                  <MiniMetric label="Balance" value={formatMoney(player.balance)} />
                 </div>
                 {editMode ? (
                   <div className="mt-4 flex gap-2">
@@ -425,14 +472,14 @@ export default function AppShell() {
                         <button className="flex-1 rounded-2xl bg-ink py-2 text-sm font-bold text-white" onClick={() => saveRename(player.id)} type="button">
                           Save
                         </button>
-                        <button className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold" onClick={() => setRenamingId(null)} type="button">
+                        <button className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold dark:bg-white/10" onClick={() => setRenamingId(null)} type="button">
                           Cancel
                         </button>
                       </>
                     ) : (
                       <>
                         <button
-                          className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold"
+                          className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold dark:bg-white/10"
                           onClick={() => {
                             setRenamingId(player.id);
                             setRenameValue(player.name);
@@ -441,7 +488,7 @@ export default function AppShell() {
                         >
                           Edit Player
                         </button>
-                        <button className="flex-1 rounded-2xl bg-rose-50 py-2 text-sm font-bold text-rose-700" onClick={() => removePlayer(player)} type="button">
+                        <button className="flex-1 rounded-2xl bg-rose-50 py-2 text-sm font-bold text-rose-700 dark:bg-rose-400/10 dark:text-rose-200" onClick={() => removePlayer(player)} type="button">
                           Delete Player
                         </button>
                       </>
@@ -453,15 +500,15 @@ export default function AppShell() {
           </div>
         </div>
 
-        <div className="rounded-[1.75rem] bg-white p-4 shadow-soft">
+        <div className="rounded-[1.5rem] border border-white/80 bg-white/95 p-4 shadow-soft dark:border-white/10 dark:bg-[#121d19]/95">
           {selectedPlayer ? (
             <>
               <div className="mb-4 flex items-start gap-3">
                 <div>
-                  <p className="text-sm font-semibold text-emerald-700">Player detail</p>
+                  <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">Player detail</p>
                   <h2 className="text-2xl font-bold">{selectedPlayer.name}</h2>
                 </div>
-                {recordState === "loading" ? <span className="ml-auto text-sm text-slate-500">Loading...</span> : null}
+                {recordState === "loading" ? <span className="ml-auto text-sm text-slate-500 dark:text-slate-400">Loading...</span> : null}
               </div>
 
               <button
@@ -473,7 +520,7 @@ export default function AppShell() {
               </button>
 
               {recordFormOpen && editMode ? (
-                <form className="rounded-3xl bg-slate-50 p-4" onSubmit={(event) => event.preventDefault()}>
+                <form className="rounded-2xl border border-slate-100 bg-slate-50 p-4 dark:border-white/10 dark:bg-white/[0.04]" onSubmit={(event) => event.preventDefault()}>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <Field label="Amount">
                       <input
@@ -508,11 +555,15 @@ export default function AppShell() {
                       />
                     </Field>
                   </div>
+                  <div className="mt-4 rounded-2xl border border-emerald-100 bg-white p-4 dark:border-emerald-400/20 dark:bg-white/[0.04]">
+                    <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Expected Return</p>
+                    <p className="mt-1 text-xl font-bold text-ink dark:text-slate-50">{formatMoney(draftExpectedReturn)}</p>
+                  </div>
                   <div className="mt-4 flex gap-2">
                     <button className="flex-1 rounded-2xl bg-emerald-600 py-3 font-bold text-white active:scale-95" disabled={busy} onClick={saveRecord} type="button">
                       Save Record
                     </button>
-                    <button className="rounded-2xl bg-slate-200 px-4 font-bold" onClick={resetRecordForm} type="button">
+                    <button className="rounded-2xl bg-slate-200 px-4 font-bold dark:bg-white/10" onClick={resetRecordForm} type="button">
                       Cancel
                     </button>
                   </div>
@@ -522,30 +573,56 @@ export default function AppShell() {
               {recordError ? <StateBox tone="error" text={recordError} /> : null}
               {recordState !== "loading" && records.length === 0 ? <StateBox tone="empty" text="No records yet. Add the first record for this player." /> : null}
 
-              <div className="mt-4 flex flex-col gap-3">
-                {records.map((record) => (
-                  <article className="rounded-3xl border border-slate-100 p-4" key={record.id}>
-                    <div className="flex items-start gap-3">
-                      <div>
-                        <p className="text-sm text-slate-500">{formatDate(record.createdAt)}</p>
-                        <p className="mt-1 text-sm font-bold text-emerald-700">
-                          {record.status === "pending" ? "Result Pending" : "Result Confirmed"}
-                        </p>
-                        {record.note ? <p className="mt-1 font-medium">{record.note}</p> : <p className="mt-1 text-sm text-slate-400">No note</p>}
+              <div className="mt-5 flex flex-col gap-3">
+                {records.map((record) => {
+                  const expectedReturn = getExpectedReturn(record.amount, record.rate);
+                  const isExpanded = expandedRecordId === record.id || confirmingRecordId === record.id;
+                  const summaryLabel = record.status === "pending" ? "Expected Return" : "Profit";
+                  const summaryValue = record.status === "pending" ? expectedReturn : record.profit;
+
+                  return (
+                  <article className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-white/[0.03]" key={record.id}>
+                    <button
+                      aria-expanded={isExpanded}
+                      className="w-full text-left"
+                      onClick={() => setExpandedRecordId((current) => (current === record.id ? null : record.id))}
+                      type="button"
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm text-slate-500 dark:text-slate-400">{formatDate(record.createdAt)}</p>
+                          <p className="mt-1 text-sm font-bold text-emerald-700 dark:text-emerald-300">
+                            {record.status === "pending" ? "Result Pending" : "Result Confirmed"}
+                          </p>
+                        </div>
+                        <StatusBadge status={record.status} />
                       </div>
-                      <div className="ml-auto"><StatusBadge status={record.status} /></div>
+                      <div className="mt-4 flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
+                        <div>
+                          <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">{summaryLabel}</p>
+                          <p className={`mt-1 text-lg font-bold ${summaryValue < 0 ? "text-rose-700 dark:text-rose-300" : "text-ink dark:text-slate-50"}`}>
+                            {formatMoney(summaryValue)}
+                          </p>
+                        </div>
+                        <span className="text-sm font-bold text-slate-500 dark:text-slate-400">{isExpanded ? "Hide Details" : "View Details"}</span>
+                      </div>
+                    </button>
+                    {isExpanded ? (
+                      <>
+                    <div className="mt-4">
+                      {record.note ? <p className="font-medium">{record.note}</p> : <p className="text-sm text-slate-400 dark:text-slate-500">No note</p>}
                     </div>
-                    <div className="mt-4 grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
-                      <MiniMetric label="Amount" value={formatVnd(record.amount)} />
+                    <div className="mt-5 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+                      <MiniMetric label="Amount" value={formatMoney(record.amount)} />
                       <MiniMetric label="Rate" value={formatNumber(record.rate)} />
                       <MiniMetric label="Status" value={record.status === "pending" ? "Pending" : "Finalized"} />
                       <MiniMetric label="Result" value={record.resultType ? resultLabels[record.resultType] : "Pending"} />
-                      <MiniMetric label="Return" value={record.status === "pending" ? "—" : formatVnd(record.returnAmount)} />
-                      <MiniMetric label="Profit" value={record.status === "pending" ? "—" : formatVnd(record.profit)} />
-                      <MiniMetric label="Balance" value={record.balance === null ? "—" : formatVnd(record.balance)} />
+                      <MiniMetric label={record.status === "pending" ? "Expected Return" : "Return"} value={record.status === "pending" ? formatMoney(expectedReturn) : formatMoney(record.returnAmount)} />
+                      <MiniMetric label="Profit" value={record.status === "pending" ? "-" : formatMoney(record.profit)} />
+                      <MiniMetric label="Balance" value={record.balance === null ? "-" : formatMoney(record.balance)} />
                     </div>
                     {record.status === "pending" ? (
-                      <div className="mt-4 rounded-3xl bg-slate-50 p-3">
+                      <div className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
                         {confirmingRecordId === record.id ? (
                           <div className="grid gap-2 sm:grid-cols-4">
                             {resultOptions.map((resultType) => (
@@ -559,7 +636,7 @@ export default function AppShell() {
                                 Confirm {resultLabels[resultType]}
                               </button>
                             ))}
-                            <button className="rounded-2xl bg-slate-200 px-4 font-bold" onClick={() => setConfirmingRecordId(null)} type="button">
+                            <button className="rounded-2xl bg-slate-200 px-4 font-bold dark:bg-white/10" onClick={() => setConfirmingRecordId(null)} type="button">
                               Cancel
                             </button>
                           </div>
@@ -573,6 +650,7 @@ export default function AppShell() {
                                 return;
                               }
                               setConfirmingRecordId(record.id);
+                              setExpandedRecordId(record.id);
                             }}
                             type="button"
                           >
@@ -584,17 +662,20 @@ export default function AppShell() {
                     {editMode ? (
                       <div className="mt-4 flex gap-2">
                         {record.status === "pending" ? (
-                          <button className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold" onClick={() => startEditRecord(record)} type="button">
+                          <button className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold dark:bg-white/10" onClick={() => startEditRecord(record)} type="button">
                             Edit Record
                           </button>
                         ) : null}
-                        <button className="flex-1 rounded-2xl bg-rose-50 py-2 text-sm font-bold text-rose-700" onClick={() => removeRecord(record)} type="button">
+                        <button className="flex-1 rounded-2xl bg-rose-50 py-2 text-sm font-bold text-rose-700 dark:bg-rose-400/10 dark:text-rose-200" onClick={() => removeRecord(record)} type="button">
                           Delete Record
                         </button>
                       </div>
                     ) : null}
+                      </>
+                    ) : null}
                   </article>
-                ))}
+                  );
+                })}
               </div>
             </>
           ) : (
@@ -604,12 +685,12 @@ export default function AppShell() {
       </section>
 
       {pinOpen ? (
-        <div className="fixed inset-0 z-50 flex items-end bg-ink/50 p-4 sm:items-center sm:justify-center">
-          <form className="w-full rounded-[1.75rem] bg-white p-5 shadow-soft sm:max-w-sm" onSubmit={verifyPin}>
+        <div className="fixed inset-0 z-50 flex items-end bg-ink/60 p-4 backdrop-blur-sm sm:items-center sm:justify-center">
+          <form className="w-full rounded-[1.5rem] border border-white/80 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-[#121d19] sm:max-w-sm" onSubmit={verifyPin}>
             <h2 className="text-xl font-bold">Enter Edit PIN</h2>
-            <p className="mt-2 text-sm text-slate-600">Enter the edit PIN to make changes.</p>
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Enter the edit PIN to make changes.</p>
             <input
-              className="mt-4 min-h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 outline-none focus:border-emerald-500"
+              className="mt-4 min-h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 outline-none focus:border-emerald-500 dark:border-white/10 dark:bg-[#0d1512]"
               onChange={(event) => setPin(event.target.value)}
               placeholder="PIN"
               type="password"
@@ -617,7 +698,7 @@ export default function AppShell() {
             />
             {pinError ? <p className="mt-2 text-sm font-semibold text-rose-700">{pinError}</p> : null}
             <div className="mt-4 flex gap-2">
-              <button className="rounded-2xl bg-slate-100 px-4 font-bold" onClick={() => setPinOpen(false)} type="button">
+              <button className="rounded-2xl bg-slate-100 px-4 font-bold dark:bg-white/10" onClick={() => setPinOpen(false)} type="button">
                 Cancel
               </button>
               <button className="flex-1 rounded-2xl bg-ink py-3 font-bold text-white" disabled={busy} type="submit">
@@ -627,36 +708,89 @@ export default function AppShell() {
           </form>
         </div>
       ) : null}
+
+      {pendingDelete ? (
+        <ConfirmDialog
+          busy={busy}
+          body={
+            pendingDelete.type === "player"
+              ? `This will delete ${pendingDelete.player.name} and all records for this player.`
+              : "This will delete this record from the player's history."
+          }
+          confirmLabel={pendingDelete.type === "player" ? "Delete Player" : "Delete Record"}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={confirmDelete}
+          title={pendingDelete.type === "player" ? "Delete Player?" : "Delete Record?"}
+        />
+      ) : null}
     </main>
+  );
+}
+
+function ConfirmDialog({
+  body,
+  busy,
+  confirmLabel,
+  onCancel,
+  onConfirm,
+  title,
+}: {
+  body: string;
+  busy: boolean;
+  confirmLabel: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+  title: string;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-ink/60 p-4 backdrop-blur-sm sm:items-center sm:justify-center">
+      <section className="w-full rounded-[1.5rem] border border-white/80 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-[#121d19] sm:max-w-sm">
+        <p className="text-sm font-bold uppercase tracking-wide text-rose-700 dark:text-rose-300">Confirm Action</p>
+        <h2 className="mt-2 text-xl font-bold">{title}</h2>
+        <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-400">{body}</p>
+        <div className="mt-5 flex gap-2">
+          <button className="rounded-2xl bg-slate-100 px-4 font-bold dark:bg-white/10" disabled={busy} onClick={onCancel} type="button">
+            Cancel
+          </button>
+          <button className="flex-1 rounded-2xl bg-rose-600 py-3 font-bold text-white active:scale-95 disabled:opacity-60" disabled={busy} onClick={onConfirm} type="button">
+            {confirmLabel}
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 
 function Metric({ label, value, positive }: { label: string; value: string; positive?: boolean }) {
   return (
-    <div className="rounded-3xl bg-white p-4 shadow-soft">
-      <p className="text-sm text-slate-500">{label}</p>
-      <p className={`mt-2 text-xl font-bold ${positive === false ? "text-rose-700" : "text-ink"}`}>{value}</p>
+    <div className="rounded-2xl border border-white/80 bg-white/95 p-4 shadow-soft dark:border-white/10 dark:bg-[#121d19]/95">
+      <p className="text-sm text-slate-500 dark:text-slate-400">{label}</p>
+      <p className={`mt-2 text-xl font-bold ${positive === false ? "text-rose-700 dark:text-rose-300" : "text-ink dark:text-slate-50"}`}>{value}</p>
     </div>
   );
 }
 
 function MiniMetric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl bg-slate-50 p-3">
-      <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="mt-1 break-words font-bold text-ink">{value}</p>
+    <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
+      <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</p>
+      <p className="mt-1 break-words font-bold text-ink dark:text-slate-50">{value}</p>
     </div>
   );
 }
 
 function ProfitBadge({ value }: { value: number }) {
   const positive = value >= 0;
-  return <span className={`rounded-full px-3 py-1 text-sm font-bold ${positive ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"}`}>{formatVnd(value)}</span>;
+  return (
+    <span className={`rounded-full px-3 py-1 text-sm font-bold ${positive ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200" : "bg-rose-100 text-rose-800 dark:bg-rose-400/15 dark:text-rose-200"}`}>
+      {formatMoney(value)}
+    </span>
+  );
 }
 
 function StatusBadge({ status }: { status: "pending" | "finalized" }) {
   return (
-    <span className={`rounded-full px-3 py-1 text-sm font-bold ${status === "pending" ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>
+    <span className={`rounded-full px-3 py-1 text-sm font-bold ${status === "pending" ? "bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-200" : "bg-emerald-100 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200"}`}>
       {status === "pending" ? "Pending" : "Finalized"}
     </span>
   );
@@ -664,7 +798,7 @@ function StatusBadge({ status }: { status: "pending" | "finalized" }) {
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <label className="flex flex-col gap-2 text-sm font-bold text-slate-700">
+    <label className="flex flex-col gap-2 text-sm font-bold text-slate-700 dark:text-slate-300">
       {label}
       {children}
     </label>
@@ -672,5 +806,9 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 }
 
 function StateBox({ text, tone }: { text: string; tone: "error" | "empty" }) {
-  return <div className={`my-3 rounded-3xl p-4 text-sm font-semibold ${tone === "error" ? "bg-rose-50 text-rose-800" : "bg-mint text-emerald-900"}`}>{text}</div>;
+  return (
+    <div className={`my-3 rounded-2xl border p-4 text-sm font-semibold ${tone === "error" ? "border-rose-100 bg-rose-50 text-rose-800 dark:border-rose-400/20 dark:bg-rose-400/10 dark:text-rose-200" : "border-emerald-100 bg-mint text-emerald-900 dark:border-emerald-400/20 dark:bg-emerald-400/10 dark:text-emerald-100"}`}>
+      {text}
+    </div>
+  );
 }

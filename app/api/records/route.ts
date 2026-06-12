@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { requireEditAccess } from "../../lib/auth";
-import { getSql, type RecordRow } from "../../lib/db";
+import { getSql, isDatabaseConfigError, type RecordRow } from "../../lib/db";
 import { jsonError } from "../../lib/http";
 import { mapRecord, withBalance } from "../../lib/mappers";
+import { ensureTrackerSchema } from "../../lib/schema";
 import { cleanOptionalText, parseGreaterThanZeroNumber, parseNonNegativeNumber } from "../../lib/validation";
 
 export async function GET(request: Request) {
@@ -15,6 +16,7 @@ export async function GET(request: Request) {
     }
 
     const sql = getSql();
+    await ensureTrackerSchema(sql);
     const rows = (await sql`
       select id, player_id, amount, rate, status, result_type, return_amount, profit, note, created_at, updated_at
       from records
@@ -26,6 +28,9 @@ export async function GET(request: Request) {
     return NextResponse.json({ records });
   } catch (error) {
     console.error("Unable to load records", error);
+    if (isDatabaseConfigError(error)) {
+      return jsonError(error, 500, "Database is not configured. Add DATABASE_URL and restart the app.");
+    }
     return jsonError(error, 500, "Unable to load data. Please try again.");
   }
 }
@@ -43,6 +48,7 @@ export async function POST(request: Request) {
     const rate = parseNonNegativeNumber(body.rate, "Rate");
     const note = cleanOptionalText(body.note);
     const sql = getSql();
+    await ensureTrackerSchema(sql);
     const [record] = (await sql`
       insert into records (player_id, amount, rate, status, result_type, return_amount, profit, note)
       values (${playerId}, ${amount}, ${rate}, 'pending', null, 0, 0, ${note})

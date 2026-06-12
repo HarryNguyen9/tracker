@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
 import { requireEditAccess } from "../../lib/auth";
-import { getSql, type PlayerRow, type RecordRow } from "../../lib/db";
+import { getSql, isDatabaseConfigError, type PlayerRow, type RecordRow } from "../../lib/db";
 import { jsonError } from "../../lib/http";
 import { mapPlayer, mapRecord } from "../../lib/mappers";
+import { ensureTrackerSchema } from "../../lib/schema";
 import { cleanText } from "../../lib/validation";
 
 export async function GET() {
   try {
     const sql = getSql();
+    await ensureTrackerSchema(sql);
     const players = (await sql`
       select id, name, created_at, updated_at
       from players
@@ -44,6 +46,9 @@ export async function GET() {
     return NextResponse.json({ players: summaries });
   } catch (error) {
     console.error("Unable to load players", error);
+    if (isDatabaseConfigError(error)) {
+      return jsonError(error, 500, "Database is not configured. Add DATABASE_URL and restart the app.");
+    }
     return jsonError(error, 500, "Unable to load data. Please try again.");
   }
 }
@@ -54,6 +59,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     const name = cleanText(body.name, "Player name");
     const sql = getSql();
+    await ensureTrackerSchema(sql);
     const [player] = (await sql`
       insert into players (name)
       values (${name})

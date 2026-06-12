@@ -3,6 +3,7 @@ import { requireEditAccess } from "../../../lib/auth";
 import { getSql, type PlayerRow } from "../../../lib/db";
 import { jsonError } from "../../../lib/http";
 import { mapPlayer } from "../../../lib/mappers";
+import { ensureTrackerSchema } from "../../../lib/schema";
 import { cleanText } from "../../../lib/validation";
 
 type Params = { params: { id: string } };
@@ -13,6 +14,7 @@ export async function PATCH(request: Request, { params }: Params) {
     const body = await request.json();
     const name = cleanText(body.name, "Player name");
     const sql = getSql();
+    await ensureTrackerSchema(sql);
     const [player] = (await sql`
       update players
       set name = ${name}, updated_at = now()
@@ -35,6 +37,7 @@ export async function DELETE(_request: Request, { params }: Params) {
   try {
     requireEditAccess();
     const sql = getSql();
+    await ensureTrackerSchema(sql);
     await sql`delete from players where id = ${params.id}`;
 
     return NextResponse.json({ ok: true });

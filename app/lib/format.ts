@@ -1,13 +1,13 @@
-export function formatVnd(value: number) {
-  return new Intl.NumberFormat("vi-VN", {
+export function formatMoney(value: number) {
+  return new Intl.NumberFormat("en-US", {
     style: "currency",
-    currency: "VND",
-    maximumFractionDigits: 0,
+    currency: "USD",
+    maximumFractionDigits: 2,
   }).format(value);
 }
 
 export function formatNumber(value: number) {
-  return new Intl.NumberFormat("vi-VN", {
+  return new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 4,
   }).format(value);
 }

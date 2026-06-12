@@ -13,7 +13,7 @@ A mobile-first Next.js app for tracking game results by player. It stores player
   - Draw: `returnAmount = amount`, `profit = 0`
 - Running Balance per player sorted by creation time.
 - Dashboard totals for Amount, Return, Profit, and record count.
-- VND display formatting with decimal Rate input.
+- USD display formatting with decimal Rate input.
 - Viewer Mode for reading data and Edit Mode unlocked by PIN for changes.
 - Pending records that become finalized only after confirming Win, Loss, or Draw.
 - Loading, empty, and error states.

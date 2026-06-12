@@ -3,6 +3,7 @@ import { requireEditAccess } from "../../../../lib/auth";
 import { getSql, type RecordRow } from "../../../../lib/db";
 import { jsonError } from "../../../../lib/http";
 import { mapRecord } from "../../../../lib/mappers";
+import { ensureTrackerSchema } from "../../../../lib/schema";
 import { calculateRecordValues, parseResultType } from "../../../../lib/validation";
 
 type Params = { params: { id: string } };
@@ -13,6 +14,7 @@ export async function PATCH(request: Request, { params }: Params) {
     const body = await request.json();
     const resultType = parseResultType(body.resultType);
     const sql = getSql();
+    await ensureTrackerSchema(sql);
     const [existing] = (await sql`
       select id, player_id, amount, rate, status, result_type, return_amount, profit, note, created_at, updated_at
       from records
