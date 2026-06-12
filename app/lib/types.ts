@@ -1,4 +1,5 @@
-export type ResultType = "win" | "loss" | "push";
+export type ResultType = "win" | "loss" | "draw";
+export type RecordStatus = "pending" | "finalized";
 
 export type Player = {
   id: string;
@@ -12,7 +13,8 @@ export type RecordItem = {
   playerId: string;
   amount: number;
   rate: number;
-  resultType: ResultType;
+  status: RecordStatus;
+  resultType: ResultType | null;
   returnAmount: number;
   profit: number;
   note: string | null;
@@ -26,8 +28,10 @@ export type PlayerSummary = Player & {
   totalProfit: number;
   balance: number;
   recordCount: number;
+  finalizedRecordCount: number;
+  pendingRecordCount: number;
 };
 
 export type RecordWithBalance = RecordItem & {
-  balance: number;
+  balance: number | null;
 };

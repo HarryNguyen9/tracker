@@ -12,7 +12,8 @@ create table if not exists records (
   player_id uuid not null references players(id) on delete cascade,
   amount numeric not null default 0,
   rate numeric not null default 0,
-  result_type text not null default 'win',
+  status text not null default 'pending',
+  result_type text,
   return_amount numeric not null default 0,
   profit numeric not null default 0,
   note text,
@@ -21,19 +22,38 @@ create table if not exists records (
 );
 
 alter table records
-  add column if not exists result_type text not null default 'win';
+  add column if not exists status text not null default 'pending';
 
-do $$
-begin
-  if not exists (
-    select 1
-    from pg_constraint
-    where conname = 'records_result_type_check'
-  ) then
-    alter table records
-      add constraint records_result_type_check
-      check (result_type in ('win', 'loss', 'push'));
-  end if;
-end $$;
+alter table records
+  add column if not exists result_type text;
+
+alter table records
+  alter column result_type drop not null;
+
+alter table records
+  alter column result_type drop default;
+
+update records
+set result_type = 'draw'
+where result_type = 'pu' || 'sh';
+
+update records
+set status = 'finalized'
+where status = 'pending'
+  and result_type is not null;
+
+alter table records
+  drop constraint if exists records_status_check;
+
+alter table records
+  add constraint records_status_check
+  check (status in ('pending', 'finalized'));
+
+alter table records
+  drop constraint if exists records_result_type_check;
+
+alter table records
+  add constraint records_result_type_check
+  check (result_type is null or result_type in ('win', 'loss', 'draw'));
 
 create index if not exists records_player_id_created_at_idx on records (player_id, created_at);

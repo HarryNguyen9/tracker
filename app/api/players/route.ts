@@ -14,7 +14,7 @@ export async function GET() {
       order by created_at asc
     `) as PlayerRow[];
     const records = (await sql`
-      select id, player_id, amount, rate, result_type, return_amount, profit, note, created_at, updated_at
+      select id, player_id, amount, rate, status, result_type, return_amount, profit, note, created_at, updated_at
       from records
       order by created_at asc
     `) as RecordRow[];
@@ -23,9 +23,11 @@ export async function GET() {
     const summaries = players.map((row) => {
       const player = mapPlayer(row);
       const ownItems = recordItems.filter((item) => item.playerId === player.id);
-      const totalAmount = ownItems.reduce((sum, item) => sum + item.amount, 0);
-      const totalReturn = ownItems.reduce((sum, item) => sum + item.returnAmount, 0);
-      const totalProfit = ownItems.reduce((sum, item) => sum + item.profit, 0);
+      const finalizedItems = ownItems.filter((item) => item.status === "finalized");
+      const pendingItems = ownItems.filter((item) => item.status === "pending");
+      const totalAmount = finalizedItems.reduce((sum, item) => sum + item.amount, 0);
+      const totalReturn = finalizedItems.reduce((sum, item) => sum + item.returnAmount, 0);
+      const totalProfit = finalizedItems.reduce((sum, item) => sum + item.profit, 0);
 
       return {
         ...player,
@@ -34,6 +36,8 @@ export async function GET() {
         totalProfit,
         balance: totalProfit,
         recordCount: ownItems.length,
+        finalizedRecordCount: finalizedItems.length,
+        pendingRecordCount: pendingItems.length,
       };
     });
 

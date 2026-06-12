@@ -1,6 +1,6 @@
 import type { ResultType } from "./types";
 
-const resultTypes = ["win", "loss", "push"] as const;
+const resultTypes = ["win", "loss", "draw"] as const;
 
 export function parseNonNegativeNumber(value: unknown, label: string) {
   const parsed = typeof value === "number" ? value : Number(value);
@@ -44,14 +44,14 @@ export function parseResultType(value: unknown): ResultType {
   if (typeof value === "string" && resultTypes.includes(value as ResultType)) {
     return value as ResultType;
   }
-  throw new Error("Result must be Win, Loss, or Push.");
+  throw new Error("Result must be Win, Loss, or Draw.");
 }
 
 export function calculateRecordValues(amount: number, rate: number, resultType: ResultType) {
   if (resultType === "loss") {
     return { returnAmount: 0, profit: -amount };
   }
-  if (resultType === "push") {
+  if (resultType === "draw") {
     return { returnAmount: amount, profit: 0 };
   }
   const returnAmount = amount * rate;

@@ -24,6 +24,7 @@ export function mapRecord(row: RecordRow): RecordItem {
     playerId: row.player_id,
     amount: toNumber(row.amount),
     rate: toNumber(row.rate),
+    status: row.status,
     resultType: row.result_type,
     returnAmount: toNumber(row.return_amount),
     profit: toNumber(row.profit),
@@ -36,6 +37,9 @@ export function mapRecord(row: RecordRow): RecordItem {
 export function withBalance(items: RecordItem[]): RecordWithBalance[] {
   let running = 0;
   return items.map((item) => {
+    if (item.status !== "finalized") {
+      return { ...item, balance: null };
+    }
     running += item.profit;
     return { ...item, balance: running };
   });

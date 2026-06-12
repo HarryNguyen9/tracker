@@ -10,11 +10,12 @@ A mobile-first Next.js app for tracking game results by player. It stores player
 - Server-calculated Return and Profit values based on Result:
   - Win: `returnAmount = amount * rate`, `profit = returnAmount - amount`
   - Loss: `returnAmount = 0`, `profit = -amount`
-  - Push: `returnAmount = amount`, `profit = 0`
+  - Draw: `returnAmount = amount`, `profit = 0`
 - Running Balance per player sorted by creation time.
 - Dashboard totals for Amount, Return, Profit, and record count.
 - VND display formatting with decimal Rate input.
 - Viewer Mode for reading data and Edit Mode unlocked by PIN for changes.
+- Pending records that become finalized only after confirming Win, Loss, or Draw.
 - Loading, empty, and error states.
 - Edit protection with `ADMIN_PIN` and an httpOnly cookie.
 
@@ -46,7 +47,7 @@ ADMIN_PIN=choose-a-private-pin
 Tables created:
 
 - `players`
-- `records` with `result_type` values `win`, `loss`, or `push`
+- `records` with pending/finalized status and `result_type` values `win`, `loss`, or `draw` after confirmation
 
 No default players are inserted.
 
@@ -61,7 +62,7 @@ Open `http://localhost:3000`.
 
 ## Deploy to Vercel
 
-1. Push this repository to your Git provider.
+1. Upload this repository to your Git provider.
 2. Import the project in Vercel.
 3. Add these environment variables in Vercel Project Settings:
    - `DATABASE_URL`
