@@ -90,7 +90,8 @@ export default function AppShell() {
       setSelectedId(nextId);
       setLoadState("ready");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load players.");
+      console.error("Unable to load players", err);
+      setError("Unable to load data. Please try again.");
       setLoadState("error");
     }
   }
@@ -108,7 +109,8 @@ export default function AppShell() {
       setRecords(data.records);
       setRecordState("ready");
     } catch (err) {
-      setRecordError(err instanceof Error ? err.message : "Could not load records.");
+      console.error("Unable to load records", err);
+      setRecordError("Unable to load data. Please try again.");
       setRecordState("error");
     }
   }
@@ -177,7 +179,8 @@ export default function AppShell() {
         openPinFor(null);
         return;
       }
-      setError(err instanceof Error ? err.message : "Action failed.");
+      console.error("Unable to save changes", err);
+      setError("Unable to save changes. Please try again.");
     } finally {
       setBusy(false);
     }
@@ -204,6 +207,10 @@ export default function AppShell() {
   }
 
   async function saveRename(playerId: string) {
+    if (!editMode) {
+      openPinFor(null);
+      return;
+    }
     await runEdit(async () => {
       await readJson(
         await fetch(`/api/players/${playerId}`, {
@@ -219,6 +226,10 @@ export default function AppShell() {
   }
 
   async function removePlayer(player: PlayerSummary) {
+    if (!editMode) {
+      openPinFor(null);
+      return;
+    }
     if (!window.confirm(`Delete ${player.name} and all records?`)) return;
     await runEdit(async () => {
       await readJson(await fetch(`/api/players/${player.id}`, { method: "DELETE" }));
@@ -251,6 +262,10 @@ export default function AppShell() {
   }
 
   async function removeRecord(record: RecordWithBalance) {
+    if (!editMode) {
+      openPinFor("record");
+      return;
+    }
     if (!window.confirm("Delete this record?")) return;
     await runEdit(async () => {
       await readJson(await fetch(`/api/records/${record.id}`, { method: "DELETE" }));
@@ -260,6 +275,10 @@ export default function AppShell() {
   }
 
   function startEditRecord(record: RecordWithBalance) {
+    if (!editMode) {
+      openPinFor("record");
+      return;
+    }
     setEditingRecordId(record.id);
     setDraft({ amount: String(record.amount), rate: String(record.rate), note: record.note ?? "", resultType: record.resultType });
     setRecordFormOpen(true);
@@ -341,7 +360,7 @@ export default function AppShell() {
             </form>
           ) : null}
 
-          {loadState === "error" ? <StateBox tone="error" text="Could not load dashboard." /> : null}
+          {loadState === "error" && !error ? <StateBox tone="error" text="Unable to load data. Please try again." /> : null}
           {loadState !== "loading" && players.length === 0 ? (
             <div className="rounded-3xl border border-dashed border-emerald-300 bg-mint p-6 text-center">
               <p className="text-lg font-bold">No players yet</p>

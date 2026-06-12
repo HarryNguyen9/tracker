@@ -25,7 +25,8 @@ export async function GET(request: Request) {
     const records = withBalance(rows.map(mapRecord));
     return NextResponse.json({ records });
   } catch (error) {
-    return jsonError(error, 500);
+    console.error("Unable to load records", error);
+    return jsonError(error, 500, "Unable to load data. Please try again.");
   }
 }
 

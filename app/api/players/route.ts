@@ -39,7 +39,8 @@ export async function GET() {
 
     return NextResponse.json({ players: summaries });
   } catch (error) {
-    return jsonError(error, 500);
+    console.error("Unable to load players", error);
+    return jsonError(error, 500, "Unable to load data. Please try again.");
   }
 }
 
