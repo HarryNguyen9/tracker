@@ -113,6 +113,7 @@ export default function AppShell() {
   const [deleteReasonError, setDeleteReasonError] = useState("");
   const [expandedRecordId, setExpandedRecordId] = useState<string | null>(null);
   const [trashOpen, setTrashOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [trashRecords, setTrashRecords] = useState<RecordWithBalance[]>([]);
   const [trashState, setTrashState] = useState<LoadState>("idle");
 
@@ -457,6 +458,7 @@ export default function AppShell() {
   function exportRecords() {
     if (!selectedPlayer) return;
     downloadCsv(`${fileSafeName(selectedPlayer.name)}-records.csv`, [recordExportHeader(), ...records.map((record) => recordExportRow(selectedPlayer, record))]);
+    setExportOpen(false);
   }
 
   function exportCurrentSession() {
@@ -477,6 +479,7 @@ export default function AppShell() {
       recordExportHeader(),
       ...records.map((record) => recordExportRow(selectedPlayer, record)),
     ]);
+    setExportOpen(false);
   }
 
   async function exportAllData() {
@@ -489,6 +492,7 @@ export default function AppShell() {
         rows.push(...data.records.map((record) => recordExportRow(player, record)));
       }
       downloadCsv("game-tracker-all-data.csv", rows);
+      setExportOpen(false);
     } catch (err) {
       console.error("Unable to export data", err);
       setError(err instanceof ApiError ? err.message : "Unable to export data. Please try again.");
@@ -692,18 +696,6 @@ export default function AppShell() {
               </section>
 
               <button
-                className={`mb-4 w-full rounded-2xl border px-4 py-3 font-bold active:scale-95 ${
-                  trashOpen
-                    ? "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-400/20 dark:bg-rose-400/10 dark:text-rose-200"
-                    : "border-slate-200 bg-white text-ink dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-50"
-                }`}
-                onClick={toggleTrash}
-                type="button"
-              >
-                {trashOpen ? "Hide Trash" : `Trash (${selectedPlayer.trashedRecordCount})`}
-              </button>
-
-              <button
                 className="mb-4 w-full rounded-2xl bg-emerald-600 py-3 font-bold text-white active:scale-95"
                 onClick={() => requestEdit(() => setRecordFormOpen(true), "record")}
                 type="button"
@@ -711,70 +703,23 @@ export default function AppShell() {
                 Add Record
               </button>
 
-              <div className="mb-4 grid gap-2 sm:grid-cols-3">
+              <div className="mb-4 grid gap-2 sm:grid-cols-2">
                 <button
-                  className="rounded-2xl bg-slate-100 px-3 py-3 text-sm font-bold active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white/10"
-                  disabled={records.length === 0}
-                  onClick={exportRecords}
+                  className="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold text-ink active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-50"
+                  onClick={toggleTrash}
                   type="button"
                 >
-                  Export Records
-                </button>
-                <button
-                  className="rounded-2xl bg-slate-100 px-3 py-3 text-sm font-bold active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white/10"
-                  disabled={!selectedPlayer}
-                  onClick={exportCurrentSession}
-                  type="button"
-                >
-                  Export Current Session
+                  Trash ({selectedPlayer.trashedRecordCount})
                 </button>
                 <button
                   className="rounded-2xl bg-slate-100 px-3 py-3 text-sm font-bold active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white/10"
                   disabled={players.length === 0 || busy}
-                  onClick={exportAllData}
+                  onClick={() => setExportOpen(true)}
                   type="button"
                 >
-                  Export All Data
+                  Export
                 </button>
               </div>
-
-              {trashOpen ? (
-                <section className="mb-4 rounded-2xl border border-rose-100 bg-rose-50/70 p-4 dark:border-rose-400/20 dark:bg-rose-400/10">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <h3 className="font-bold text-rose-800 dark:text-rose-100">Trash</h3>
-                      <p className="text-sm text-rose-700/80 dark:text-rose-200/80">Deleted records for this player.</p>
-                    </div>
-                    {trashState === "loading" ? <span className="text-sm font-semibold text-rose-700 dark:text-rose-200">Loading...</span> : null}
-                  </div>
-                  {trashState !== "loading" && trashRecords.length === 0 ? (
-                    <p className="mt-4 rounded-2xl bg-white/70 p-3 text-sm font-semibold text-rose-800 dark:bg-white/10 dark:text-rose-100">Trash is empty.</p>
-                  ) : null}
-                  <div className="mt-4 flex flex-col gap-3">
-                    {trashRecords.map((record) => (
-                      <article className="rounded-2xl border border-rose-100 bg-white p-3 dark:border-rose-400/20 dark:bg-[#121d19]" key={record.id}>
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-bold text-rose-800 dark:text-rose-100">{record.status === "pending" ? "Pending Record" : "Finalized Record"}</p>
-                            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Deleted: {record.deletedAt ? formatDate(record.deletedAt) : "-"}</p>
-                          </div>
-                          <ProfitBadge value={record.profit} />
-                        </div>
-                        <div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
-                          <MiniMetric label="Amount" value={formatMoney(record.amount)} />
-                          <MiniMetric label="Rate" value={formatNumber(record.rate)} />
-                          <MiniMetric label="Result" value={record.resultType ? resultLabels[record.resultType] : "Pending"} />
-                          <MiniMetric label="Return" value={record.status === "pending" ? formatMoney(getExpectedReturn(record.amount, record.rate)) : formatMoney(record.returnAmount)} />
-                        </div>
-                        <div className="mt-3 rounded-2xl bg-rose-50 p-3 text-sm dark:bg-rose-400/10">
-                          <p className="text-xs font-bold uppercase tracking-wide text-rose-700 dark:text-rose-200">Delete Reason</p>
-                          <p className="mt-1 text-rose-900 dark:text-rose-50">{record.deleteReason}</p>
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                </section>
-              ) : null}
 
               {recordFormOpen && editMode ? (
                 <form className="rounded-2xl border border-slate-100 bg-slate-50 p-4 dark:border-white/10 dark:bg-white/[0.04]" onSubmit={(event) => event.preventDefault()}>
@@ -998,6 +943,25 @@ export default function AppShell() {
         </div>
       ) : null}
 
+      {exportOpen ? (
+        <ExportDialog
+          busy={busy}
+          canExportRecords={records.length > 0}
+          onCancel={() => setExportOpen(false)}
+          onExportAllData={exportAllData}
+          onExportCurrentSession={exportCurrentSession}
+          onExportRecords={exportRecords}
+        />
+      ) : null}
+
+      {trashOpen ? (
+        <TrashDialog
+          loading={trashState === "loading"}
+          onCancel={() => setTrashOpen(false)}
+          records={trashRecords}
+        />
+      ) : null}
+
       {pendingDelete ? (
         <ConfirmDialog
           busy={busy}
@@ -1074,6 +1038,98 @@ function ConfirmDialog({
           <button className="flex-1 rounded-2xl bg-rose-600 py-3 font-bold text-white active:scale-95 disabled:opacity-60" disabled={busy} onClick={onConfirm} type="button">
             {confirmLabel}
           </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ExportDialog({
+  busy,
+  canExportRecords,
+  onCancel,
+  onExportAllData,
+  onExportCurrentSession,
+  onExportRecords,
+}: {
+  busy: boolean;
+  canExportRecords: boolean;
+  onCancel: () => void;
+  onExportAllData: () => void;
+  onExportCurrentSession: () => void;
+  onExportRecords: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-ink/60 p-4 backdrop-blur-sm sm:items-center sm:justify-center">
+      <section className="w-full rounded-[1.5rem] border border-white/80 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-[#121d19] sm:max-w-sm">
+        <p className="text-sm font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Export</p>
+        <h2 className="mt-2 text-xl font-bold">Choose Export Type</h2>
+        <div className="mt-5 grid gap-2">
+          <button className="rounded-2xl bg-slate-100 px-4 py-3 text-left font-bold active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white/10" disabled={!canExportRecords || busy} onClick={onExportRecords} type="button">
+            Export Records
+          </button>
+          <button className="rounded-2xl bg-slate-100 px-4 py-3 text-left font-bold active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white/10" disabled={busy} onClick={onExportCurrentSession} type="button">
+            Export Current Session
+          </button>
+          <button className="rounded-2xl bg-slate-100 px-4 py-3 text-left font-bold active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white/10" disabled={busy} onClick={onExportAllData} type="button">
+            Export All Data
+          </button>
+        </div>
+        <button className="mt-4 w-full rounded-2xl bg-slate-100 px-4 py-3 font-bold text-ink dark:bg-slate-700 dark:text-slate-50" disabled={busy} onClick={onCancel} type="button">
+          Cancel
+        </button>
+      </section>
+    </div>
+  );
+}
+
+function TrashDialog({
+  loading,
+  onCancel,
+  records,
+}: {
+  loading: boolean;
+  onCancel: () => void;
+  records: RecordWithBalance[];
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-ink/60 p-4 backdrop-blur-sm sm:items-center sm:justify-center">
+      <section className="max-h-[86vh] w-full overflow-hidden rounded-[1.5rem] border border-white/80 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-[#121d19] sm:max-w-2xl">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-bold uppercase tracking-wide text-rose-700 dark:text-rose-300">Trash</p>
+            <h2 className="mt-2 text-xl font-bold">Deleted Records</h2>
+          </div>
+          <button className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-bold text-ink dark:bg-slate-700 dark:text-slate-50" onClick={onCancel} type="button">
+            Close
+          </button>
+        </div>
+
+        {loading ? <p className="mt-5 rounded-2xl bg-slate-100 p-4 text-sm font-semibold dark:bg-white/10">Loading trash...</p> : null}
+        {!loading && records.length === 0 ? <p className="mt-5 rounded-2xl bg-slate-100 p-4 text-sm font-semibold dark:bg-white/10">Trash is empty.</p> : null}
+
+        <div className="mt-5 flex max-h-[62vh] flex-col gap-3 overflow-y-auto pr-1">
+          {records.map((record) => (
+            <article className="rounded-2xl border border-rose-100 bg-rose-50/60 p-3 dark:border-rose-400/20 dark:bg-rose-400/10" key={record.id}>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-bold text-rose-800 dark:text-rose-100">{record.status === "pending" ? "Pending Record" : "Finalized Record"}</p>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Deleted: {record.deletedAt ? formatDate(record.deletedAt) : "-"}</p>
+                </div>
+                <ProfitBadge value={record.profit} />
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+                <MiniMetric label="Amount" value={formatMoney(record.amount)} />
+                <MiniMetric label="Rate" value={formatNumber(record.rate)} />
+                <MiniMetric label="Result" value={record.resultType ? resultLabels[record.resultType] : "Pending"} />
+                <MiniMetric label="Return" value={record.status === "pending" ? formatMoney(getExpectedReturn(record.amount, record.rate)) : formatMoney(record.returnAmount)} />
+              </div>
+              <div className="mt-3 rounded-2xl bg-white/75 p-3 text-sm dark:bg-[#121d19]/80">
+                <p className="text-xs font-bold uppercase tracking-wide text-rose-700 dark:text-rose-200">Delete Reason</p>
+                <p className="mt-1 text-rose-900 dark:text-rose-50">{record.deleteReason}</p>
+              </div>
+            </article>
+          ))}
         </div>
       </section>
     </div>
