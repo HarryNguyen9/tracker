@@ -8,6 +8,16 @@ import { cleanOptionalText, parseGreaterThanZeroNumber, parseNonNegativeNumber }
 
 type Sql = ReturnType<typeof getSql>;
 
+async function insertPendingRecord(sql: Sql, playerId: string, amount: number, rate: number, note: string | null) {
+  const [record] = (await sql`
+    insert into records (player_id, amount, rate, status, result_type, return_amount, profit, note)
+    values (${playerId}, ${amount}, ${rate}, 'pending', null, 0, 0, ${note})
+    returning id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, created_at, updated_at
+  `) as RecordRow[];
+
+  return record;
+}
+
 async function loadRecordRows(sql: Sql, playerId: string, trash: boolean) {
   return trash
     ? ((await sql`
@@ -71,12 +81,15 @@ export async function POST(request: Request) {
     const rate = parseNonNegativeNumber(body.rate, "Rate");
     const note = cleanOptionalText(body.note);
     const sql = getSql();
-    await ensureTrackerSchema(sql);
-    const [record] = (await sql`
-      insert into records (player_id, amount, rate, status, result_type, return_amount, profit, note)
-      values (${playerId}, ${amount}, ${rate}, 'pending', null, 0, 0, ${note})
-      returning id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, created_at, updated_at
-    `) as RecordRow[];
+    let record: RecordRow;
+    try {
+      record = await insertPendingRecord(sql, playerId, amount, rate, note);
+    } catch (error) {
+      if (!(await ensureTrackerSchemaIfNeeded(error, sql))) {
+        throw error;
+      }
+      record = await insertPendingRecord(sql, playerId, amount, rate, note);
+    }
 
     return NextResponse.json({ record: mapRecord(record) }, { status: 201 });
   } catch (error) {

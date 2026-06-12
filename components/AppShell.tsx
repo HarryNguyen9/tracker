@@ -2,7 +2,7 @@
 
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import { formatDate, formatMoney, formatNumber } from "../app/lib/format";
-import type { PlayerSummary, RecordWithBalance, ResultType } from "../app/lib/types";
+import type { PlayerSummary, RecordItem, RecordWithBalance, ResultType } from "../app/lib/types";
 
 type LoadState = "idle" | "loading" | "ready" | "error";
 type RecordDraft = { amount: string; rate: string; note: string };
@@ -65,6 +65,27 @@ function recordExportRow(player: PlayerSummary, record: RecordWithBalance): CsvV
     record.balance ?? "",
     record.note ?? "",
   ];
+}
+
+function applyClientBalance(items: RecordWithBalance[]) {
+  let running = 0;
+  return items.map((item) => {
+    if (item.status !== "finalized") {
+      return { ...item, balance: null };
+    }
+    running += item.profit;
+    return { ...item, balance: running };
+  });
+}
+
+function upsertRecord(items: RecordWithBalance[], record: RecordItem) {
+  const nextRecord: RecordWithBalance = { ...record, balance: null };
+  const nextItems = items.some((item) => item.id === record.id)
+    ? items.map((item) => (item.id === record.id ? nextRecord : item))
+    : [...items, nextRecord];
+
+  nextItems.sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
+  return applyClientBalance(nextItems);
 }
 
 class ApiError extends Error {
@@ -196,6 +217,13 @@ export default function AppShell() {
       setRecordError(err instanceof ApiError ? err.message : "Unable to load trash. Please try again.");
       setTrashState("error");
     }
+  }
+
+  function refreshSelectedData(playerId: string | null) {
+    void Promise.all([loadRecords(playerId, { silent: true }), loadPlayers(playerId, { silent: true })]).catch((err) => {
+      console.error("Unable to refresh data", err);
+      setError(err instanceof ApiError ? err.message : "Unable to refresh data. Please try again.");
+    });
   }
 
   useEffect(() => {
@@ -374,16 +402,27 @@ export default function AppShell() {
     }
     setRecordError("");
     await runEdit(async () => {
+      const isCreating = !editingRecordId;
       const url = editingRecordId ? `/api/records/${editingRecordId}` : "/api/records";
-      await readJson(
+      const data = await readJson<{ record: RecordItem }>(
         await fetch(url, {
           method: editingRecordId ? "PATCH" : "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ...draft, playerId: selectedId }),
         }),
       );
+      setRecords((current) => upsertRecord(current, data.record));
+      if (isCreating) {
+        setPlayers((current) =>
+          current.map((player) =>
+            player.id === selectedId
+              ? { ...player, recordCount: player.recordCount + 1, pendingRecordCount: player.pendingRecordCount + 1 }
+              : player,
+          ),
+        );
+      }
       resetRecordForm();
-      await Promise.all([loadRecords(selectedId, { silent: true }), loadPlayers(selectedId, { silent: true })]);
+      refreshSelectedData(selectedId);
     });
   }
 
