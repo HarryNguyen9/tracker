@@ -470,6 +470,9 @@ export default function AppShell() {
       ["Balance", selectedPlayer.balance],
       ["Finalized Records", selectedPlayer.finalizedRecordCount],
       ["Pending Records", selectedPlayer.pendingRecordCount],
+      ["Win Count", selectedPlayer.winCount],
+      ["Loss Count", selectedPlayer.lossCount],
+      ["Draw Count", selectedPlayer.drawCount],
       [],
       recordExportHeader(),
       ...records.map((record) => recordExportRow(selectedPlayer, record)),
@@ -670,6 +673,23 @@ export default function AppShell() {
                 </div>
                 {recordState === "loading" ? <span className="ml-auto text-sm text-slate-500 dark:text-slate-400">Loading...</span> : null}
               </div>
+
+              <section className="mb-4 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <h3 className="font-bold">Player Summary</h3>
+                  <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200">Live</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <SummaryTile accent="emerald" icon="$" label="Current Balance" value={formatMoney(selectedPlayer.balance)} />
+                  <SummaryTile accent="slate" icon="A" label="Total Amount" value={formatMoney(selectedPlayer.totalAmount)} />
+                  <SummaryTile accent="sky" icon="R" label="Total Return" value={formatMoney(selectedPlayer.totalReturn)} />
+                  <SummaryTile accent={selectedPlayer.totalProfit < 0 ? "rose" : "emerald"} icon="P" label="Total Profit" value={formatMoney(selectedPlayer.totalProfit)} />
+                  <SummaryTile accent="emerald" icon="W" label="Win Count" value={formatNumber(selectedPlayer.winCount)} />
+                  <SummaryTile accent="rose" icon="L" label="Loss Count" value={formatNumber(selectedPlayer.lossCount)} />
+                  <SummaryTile accent="amber" icon="D" label="Draw Count" value={formatNumber(selectedPlayer.drawCount)} />
+                  <SummaryTile accent="amber" icon="P" label="Pending Count" value={formatNumber(selectedPlayer.pendingRecordCount)} />
+                </div>
+              </section>
 
               <button
                 className={`mb-4 w-full rounded-2xl border px-4 py-3 font-bold active:scale-95 ${
@@ -967,7 +987,7 @@ export default function AppShell() {
             />
             {pinError ? <p className="mt-2 text-sm font-semibold text-rose-700">{pinError}</p> : null}
             <div className="mt-4 flex gap-2">
-              <button className="rounded-2xl bg-slate-100 px-4 font-bold dark:bg-white/12 dark:text-slate-100" onClick={() => setPinOpen(false)} type="button">
+              <button className="rounded-2xl bg-slate-100 px-4 font-bold text-ink dark:bg-slate-700 dark:text-slate-50" onClick={() => setPinOpen(false)} type="button">
                 Cancel
               </button>
               <button className="flex-1 rounded-2xl bg-emerald-600 py-3 font-bold text-white shadow-sm active:scale-95 disabled:opacity-60 dark:bg-emerald-500 dark:text-ink" disabled={busy} type="submit">
@@ -1065,6 +1085,36 @@ function Metric({ label, value, positive }: { label: string; value: string; posi
     <div className="rounded-2xl border border-white/80 bg-white/95 p-4 shadow-soft dark:border-white/10 dark:bg-[#121d19]/95">
       <p className="text-sm text-slate-500 dark:text-slate-400">{label}</p>
       <p className={`mt-2 text-xl font-bold ${positive === false ? "text-rose-700 dark:text-rose-300" : "text-ink dark:text-slate-50"}`}>{value}</p>
+    </div>
+  );
+}
+
+function SummaryTile({
+  accent,
+  icon,
+  label,
+  value,
+}: {
+  accent: "amber" | "emerald" | "rose" | "sky" | "slate";
+  icon: string;
+  label: string;
+  value: string;
+}) {
+  const styles = {
+    amber: "border-amber-100 bg-amber-50 text-amber-800 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-200",
+    emerald: "border-emerald-100 bg-emerald-50 text-emerald-800 dark:border-emerald-400/20 dark:bg-emerald-400/10 dark:text-emerald-200",
+    rose: "border-rose-100 bg-rose-50 text-rose-800 dark:border-rose-400/20 dark:bg-rose-400/10 dark:text-rose-200",
+    sky: "border-sky-100 bg-sky-50 text-sky-800 dark:border-sky-400/20 dark:bg-sky-400/10 dark:text-sky-200",
+    slate: "border-slate-100 bg-white text-slate-700 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-200",
+  };
+
+  return (
+    <div className={`rounded-2xl border p-3 ${styles[accent]}`}>
+      <div className="mb-3 flex items-center gap-2">
+        <span className="flex size-7 items-center justify-center rounded-full bg-white/70 text-xs font-black dark:bg-white/10">{icon}</span>
+        <p className="text-xs font-bold uppercase tracking-wide opacity-80">{label}</p>
+      </div>
+      <p className="break-words text-lg font-black text-ink dark:text-slate-50">{value}</p>
     </div>
   );
 }

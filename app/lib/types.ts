@@ -33,6 +33,9 @@ export type PlayerSummary = Player & {
   finalizedRecordCount: number;
   pendingRecordCount: number;
   trashedRecordCount: number;
+  winCount: number;
+  lossCount: number;
+  drawCount: number;
 };
 
 export type RecordWithBalance = RecordItem & {

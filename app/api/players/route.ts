@@ -31,6 +31,9 @@ export async function GET() {
       const totalAmount = finalizedItems.reduce((sum, item) => sum + item.amount, 0);
       const totalReturn = finalizedItems.reduce((sum, item) => sum + item.returnAmount, 0);
       const totalProfit = finalizedItems.reduce((sum, item) => sum + item.profit, 0);
+      const winCount = finalizedItems.filter((item) => item.resultType === "win").length;
+      const lossCount = finalizedItems.filter((item) => item.resultType === "loss").length;
+      const drawCount = finalizedItems.filter((item) => item.resultType === "draw").length;
 
       return {
         ...player,
@@ -42,6 +45,9 @@ export async function GET() {
         finalizedRecordCount: finalizedItems.length,
         pendingRecordCount: pendingItems.length,
         trashedRecordCount: trashedItems.length,
+        winCount,
+        lossCount,
+        drawCount,
       };
     });
 
