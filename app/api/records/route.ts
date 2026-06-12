@@ -3,8 +3,28 @@ import { requireEditAccess } from "../../lib/auth";
 import { getSql, isDatabaseConfigError, type RecordRow } from "../../lib/db";
 import { jsonError } from "../../lib/http";
 import { mapRecord, withBalance } from "../../lib/mappers";
-import { ensureTrackerSchema } from "../../lib/schema";
+import { ensureTrackerSchema, ensureTrackerSchemaIfNeeded } from "../../lib/schema";
 import { cleanOptionalText, parseGreaterThanZeroNumber, parseNonNegativeNumber } from "../../lib/validation";
+
+type Sql = ReturnType<typeof getSql>;
+
+async function loadRecordRows(sql: Sql, playerId: string, trash: boolean) {
+  return trash
+    ? ((await sql`
+        select id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, created_at, updated_at
+        from records
+        where player_id = ${playerId}
+          and deleted_at is not null
+        order by deleted_at desc
+      `) as RecordRow[])
+    : ((await sql`
+        select id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, created_at, updated_at
+        from records
+        where player_id = ${playerId}
+          and deleted_at is null
+        order by created_at asc
+      `) as RecordRow[]);
+}
 
 export async function GET(request: Request) {
   try {
@@ -17,22 +37,15 @@ export async function GET(request: Request) {
     }
 
     const sql = getSql();
-    await ensureTrackerSchema(sql);
-    const rows = trash
-      ? ((await sql`
-          select id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, created_at, updated_at
-          from records
-          where player_id = ${playerId}
-            and deleted_at is not null
-          order by deleted_at desc
-        `) as RecordRow[])
-      : ((await sql`
-          select id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, created_at, updated_at
-          from records
-          where player_id = ${playerId}
-            and deleted_at is null
-          order by created_at asc
-        `) as RecordRow[]);
+    let rows: RecordRow[];
+    try {
+      rows = await loadRecordRows(sql, playerId, trash);
+    } catch (error) {
+      if (!(await ensureTrackerSchemaIfNeeded(error, sql))) {
+        throw error;
+      }
+      rows = await loadRecordRows(sql, playerId, trash);
+    }
 
     const records = trash ? rows.map(mapRecord).map((record) => ({ ...record, balance: null })) : withBalance(rows.map(mapRecord));
     return NextResponse.json({ records });

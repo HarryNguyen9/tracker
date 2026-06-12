@@ -3,6 +3,7 @@ import type { getSql } from "./db";
 type Sql = ReturnType<typeof getSql>;
 
 let schemaReady: Promise<void> | null = null;
+const recoverableSchemaErrorCodes = new Set(["42P01", "42703", "42883"]);
 
 export async function ensureTrackerSchema(sql: Sql) {
   schemaReady ??= applyTrackerSchema(sql).catch((error) => {
@@ -11,6 +12,28 @@ export async function ensureTrackerSchema(sql: Sql) {
   });
 
   return schemaReady;
+}
+
+export async function ensureTrackerSchemaIfNeeded(error: unknown, sql: Sql) {
+  if (!isRecoverableSchemaError(error)) {
+    return false;
+  }
+
+  await ensureTrackerSchema(sql);
+  return true;
+}
+
+function isRecoverableSchemaError(error: unknown) {
+  const code =
+    typeof error === "object" && error !== null && "code" in error
+      ? String((error as { code?: unknown }).code)
+      : "";
+  if (recoverableSchemaErrorCodes.has(code)) {
+    return true;
+  }
+
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  return message.includes("does not exist") || message.includes("no such table") || message.includes("no such column");
 }
 
 async function applyTrackerSchema(sql: Sql) {
