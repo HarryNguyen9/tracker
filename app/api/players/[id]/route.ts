@@ -1,0 +1,45 @@
+import { NextResponse } from "next/server";
+import { requireEditAccess } from "../../../lib/auth";
+import { getSql, type PlayerRow } from "../../../lib/db";
+import { jsonError } from "../../../lib/http";
+import { mapPlayer } from "../../../lib/mappers";
+import { cleanText } from "../../../lib/validation";
+
+type Params = { params: { id: string } };
+
+export async function PATCH(request: Request, { params }: Params) {
+  try {
+    requireEditAccess();
+    const body = await request.json();
+    const name = cleanText(body.name, "Player name");
+    const sql = getSql();
+    const [player] = (await sql`
+      update players
+      set name = ${name}, updated_at = now()
+      where id = ${params.id}
+      returning id, name, created_at, updated_at
+    `) as PlayerRow[];
+
+    if (!player) {
+      return jsonError(new Error("Player was not found."), 404);
+    }
+
+    return NextResponse.json({ player: mapPlayer(player) });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    return jsonError(error, message.includes("permission") ? 401 : 400);
+  }
+}
+
+export async function DELETE(_request: Request, { params }: Params) {
+  try {
+    requireEditAccess();
+    const sql = getSql();
+    await sql`delete from players where id = ${params.id}`;
+
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    return jsonError(error, message.includes("permission") ? 401 : 400);
+  }
+}
