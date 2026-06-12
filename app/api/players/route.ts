@@ -1,33 +1,26 @@
 import { NextResponse } from "next/server";
 import { requireEditAccess } from "../../lib/auth";
+import { getSql, type PlayerRow, type RecordRow } from "../../lib/db";
 import { jsonError } from "../../lib/http";
 import { mapPlayer, mapRecord } from "../../lib/mappers";
-import { getServerClient, type PlayerRow, type RecordRow } from "../../lib/supabase";
 import { cleanText } from "../../lib/validation";
 
 export async function GET() {
   try {
-    const client = getServerClient();
-    const { data: players, error: playersError } = await client
-      .from("players")
-      .select("id,name,created_at,updated_at")
-      .order("created_at", { ascending: true });
+    const sql = getSql();
+    const players = (await sql`
+      select id, name, created_at, updated_at
+      from players
+      order by created_at asc
+    `) as PlayerRow[];
+    const records = (await sql`
+      select id, player_id, amount, rate, return_amount, profit, note, created_at, updated_at
+      from records
+      order by created_at asc
+    `) as RecordRow[];
 
-    if (playersError) {
-      throw playersError;
-    }
-
-    const { data: records, error: recordsError } = await client
-      .from("records")
-      .select("id,player_id,amount,rate,return_amount,profit,note,created_at,updated_at")
-      .order("created_at", { ascending: true });
-
-    if (recordsError) {
-      throw recordsError;
-    }
-
-    const recordItems = ((records ?? []) as RecordRow[]).map(mapRecord);
-    const summaries = ((players ?? []) as PlayerRow[]).map((row) => {
+    const recordItems = records.map(mapRecord);
+    const summaries = players.map((row) => {
       const player = mapPlayer(row);
       const ownItems = recordItems.filter((item) => item.playerId === player.id);
       const totalAmount = ownItems.reduce((sum, item) => sum + item.amount, 0);
@@ -55,18 +48,14 @@ export async function POST(request: Request) {
     requireEditAccess();
     const body = await request.json();
     const name = cleanText(body.name, "Player name");
-    const client = getServerClient();
-    const { data, error } = await client
-      .from("players")
-      .insert({ name })
-      .select("id,name,created_at,updated_at")
-      .single();
+    const sql = getSql();
+    const [player] = (await sql`
+      insert into players (name)
+      values (${name})
+      returning id, name, created_at, updated_at
+    `) as PlayerRow[];
 
-    if (error) {
-      throw error;
-    }
-
-    return NextResponse.json({ player: mapPlayer(data as PlayerRow) }, { status: 201 });
+    return NextResponse.json({ player: mapPlayer(player) }, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     return jsonError(error, message.includes("access") ? 401 : 400);

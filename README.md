@@ -1,6 +1,6 @@
 # Game Result Tracker
 
-A mobile-first Next.js app for tracking game results by player. It stores players and records in Supabase Postgres, uses server-side API routes for all data changes, and keeps edit access behind a simple admin PIN cookie.
+A mobile-first Next.js app for tracking game results by player. It stores players and records in Neon Postgres, uses server-side API routes for all data changes, and keeps edit access behind a simple admin PIN cookie.
 
 ## Features
 
@@ -21,7 +21,7 @@ A mobile-first Next.js app for tracking game results by player. It stores player
 - Next.js App Router
 - TypeScript
 - TailwindCSS
-- Supabase Postgres
+- Neon Postgres
 - Server-side API routes
 
 ## Environment variables
@@ -29,16 +29,17 @@ A mobile-first Next.js app for tracking game results by player. It stores player
 Copy `.env.example` to `.env.local` and fill in the values:
 
 ```bash
-NEXT_PUBLIC_SUPABASE_URL=your-supabase-project-url
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+DATABASE_URL=postgresql://...
 ADMIN_PIN=choose-a-private-pin
 ```
 
-The service role key is only used in server-side API routes. Do not expose it in browser code.
+`DATABASE_URL` is only used by server-side API routes. Do not expose it in browser code.
 
-## Database setup
+## Database setup with Neon
 
-Run the SQL in `supabase/migrations/001_create_game_tracker_tables.sql` in the Supabase SQL editor or through your preferred Supabase migration workflow.
+1. Create a Neon project.
+2. Open the Neon SQL Editor.
+3. Run the SQL in `migrations/001_create_game_tracker_tables.sql`.
 
 Tables created:
 
@@ -61,8 +62,7 @@ Open `http://localhost:3000`.
 1. Push this repository to your Git provider.
 2. Import the project in Vercel.
 3. Add these environment variables in Vercel Project Settings:
-   - `NEXT_PUBLIC_SUPABASE_URL`
-   - `SUPABASE_SERVICE_ROLE_KEY`
+   - `DATABASE_URL`
    - `ADMIN_PIN`
 4. Deploy.
 

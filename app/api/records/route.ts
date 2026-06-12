@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireEditAccess } from "../../lib/auth";
+import { getSql, type RecordRow } from "../../lib/db";
 import { jsonError } from "../../lib/http";
 import { mapRecord, withBalance } from "../../lib/mappers";
-import { getServerClient, type RecordRow } from "../../lib/supabase";
 import { cleanOptionalText, parsePositiveNumber } from "../../lib/validation";
 
 export async function GET(request: Request) {
@@ -14,18 +14,15 @@ export async function GET(request: Request) {
       return jsonError(new Error("playerId is required."));
     }
 
-    const client = getServerClient();
-    const { data, error } = await client
-      .from("records")
-      .select("id,player_id,amount,rate,return_amount,profit,note,created_at,updated_at")
-      .eq("player_id", playerId)
-      .order("created_at", { ascending: true });
+    const sql = getSql();
+    const rows = (await sql`
+      select id, player_id, amount, rate, return_amount, profit, note, created_at, updated_at
+      from records
+      where player_id = ${playerId}
+      order by created_at asc
+    `) as RecordRow[];
 
-    if (error) {
-      throw error;
-    }
-
-    const records = withBalance(((data ?? []) as RecordRow[]).map(mapRecord));
+    const records = withBalance(rows.map(mapRecord));
     return NextResponse.json({ records });
   } catch (error) {
     return jsonError(error, 500);
@@ -46,18 +43,14 @@ export async function POST(request: Request) {
     const returnAmount = amount * rate;
     const profit = returnAmount - amount;
     const note = cleanOptionalText(body.note);
-    const client = getServerClient();
-    const { data, error } = await client
-      .from("records")
-      .insert({ player_id: playerId, amount, rate, return_amount: returnAmount, profit, note })
-      .select("id,player_id,amount,rate,return_amount,profit,note,created_at,updated_at")
-      .single();
+    const sql = getSql();
+    const [record] = (await sql`
+      insert into records (player_id, amount, rate, return_amount, profit, note)
+      values (${playerId}, ${amount}, ${rate}, ${returnAmount}, ${profit}, ${note})
+      returning id, player_id, amount, rate, return_amount, profit, note, created_at, updated_at
+    `) as RecordRow[];
 
-    if (error) {
-      throw error;
-    }
-
-    return NextResponse.json({ record: mapRecord(data as RecordRow) }, { status: 201 });
+    return NextResponse.json({ record: mapRecord(record) }, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     return jsonError(error, message.includes("access") ? 401 : 400);

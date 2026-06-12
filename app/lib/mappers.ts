@@ -1,16 +1,20 @@
 import type { Player, RecordItem, RecordWithBalance } from "./types";
-import type { PlayerRow, RecordRow } from "./supabase";
+import type { PlayerRow, RecordRow } from "./db";
 
 export function toNumber(value: string | number) {
   return typeof value === "number" ? value : Number(value);
+}
+
+function toIsoText(value: string | Date) {
+  return value instanceof Date ? value.toISOString() : value;
 }
 
 export function mapPlayer(row: PlayerRow): Player {
   return {
     id: row.id,
     name: row.name,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    createdAt: toIsoText(row.created_at),
+    updatedAt: toIsoText(row.updated_at),
   };
 }
 
@@ -23,8 +27,8 @@ export function mapRecord(row: RecordRow): RecordItem {
     returnAmount: toNumber(row.return_amount),
     profit: toNumber(row.profit),
     note: row.note,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    createdAt: toIsoText(row.created_at),
+    updatedAt: toIsoText(row.updated_at),
   };
 }
 

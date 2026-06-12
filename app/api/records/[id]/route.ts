@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireEditAccess } from "../../../lib/auth";
+import { getSql, type RecordRow } from "../../../lib/db";
 import { jsonError } from "../../../lib/http";
 import { mapRecord } from "../../../lib/mappers";
-import { getServerClient, type RecordRow } from "../../../lib/supabase";
 import { cleanOptionalText, parsePositiveNumber } from "../../../lib/validation";
 
 type Params = { params: { id: string } };
@@ -16,19 +16,24 @@ export async function PATCH(request: Request, { params }: Params) {
     const returnAmount = amount * rate;
     const profit = returnAmount - amount;
     const note = cleanOptionalText(body.note);
-    const client = getServerClient();
-    const { data, error } = await client
-      .from("records")
-      .update({ amount, rate, return_amount: returnAmount, profit, note, updated_at: new Date().toISOString() })
-      .eq("id", params.id)
-      .select("id,player_id,amount,rate,return_amount,profit,note,created_at,updated_at")
-      .single();
+    const sql = getSql();
+    const [record] = (await sql`
+      update records
+      set amount = ${amount},
+          rate = ${rate},
+          return_amount = ${returnAmount},
+          profit = ${profit},
+          note = ${note},
+          updated_at = now()
+      where id = ${params.id}
+      returning id, player_id, amount, rate, return_amount, profit, note, created_at, updated_at
+    `) as RecordRow[];
 
-    if (error) {
-      throw error;
+    if (!record) {
+      return jsonError(new Error("Record was not found."), 404);
     }
 
-    return NextResponse.json({ record: mapRecord(data as RecordRow) });
+    return NextResponse.json({ record: mapRecord(record) });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     return jsonError(error, message.includes("access") ? 401 : 400);
@@ -38,12 +43,8 @@ export async function PATCH(request: Request, { params }: Params) {
 export async function DELETE(_request: Request, { params }: Params) {
   try {
     requireEditAccess();
-    const client = getServerClient();
-    const { error } = await client.from("records").delete().eq("id", params.id);
-
-    if (error) {
-      throw error;
-    }
+    const sql = getSql();
+    await sql`delete from records where id = ${params.id}`;
 
     return NextResponse.json({ ok: true });
   } catch (error) {

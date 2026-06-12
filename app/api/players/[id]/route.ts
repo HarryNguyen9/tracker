@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireEditAccess } from "../../../lib/auth";
+import { getSql, type PlayerRow } from "../../../lib/db";
 import { jsonError } from "../../../lib/http";
 import { mapPlayer } from "../../../lib/mappers";
-import { getServerClient, type PlayerRow } from "../../../lib/supabase";
 import { cleanText } from "../../../lib/validation";
 
 type Params = { params: { id: string } };
@@ -12,19 +12,19 @@ export async function PATCH(request: Request, { params }: Params) {
     requireEditAccess();
     const body = await request.json();
     const name = cleanText(body.name, "Player name");
-    const client = getServerClient();
-    const { data, error } = await client
-      .from("players")
-      .update({ name, updated_at: new Date().toISOString() })
-      .eq("id", params.id)
-      .select("id,name,created_at,updated_at")
-      .single();
+    const sql = getSql();
+    const [player] = (await sql`
+      update players
+      set name = ${name}, updated_at = now()
+      where id = ${params.id}
+      returning id, name, created_at, updated_at
+    `) as PlayerRow[];
 
-    if (error) {
-      throw error;
+    if (!player) {
+      return jsonError(new Error("Player was not found."), 404);
     }
 
-    return NextResponse.json({ player: mapPlayer(data as PlayerRow) });
+    return NextResponse.json({ player: mapPlayer(player) });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     return jsonError(error, message.includes("access") ? 401 : 400);
@@ -34,12 +34,8 @@ export async function PATCH(request: Request, { params }: Params) {
 export async function DELETE(_request: Request, { params }: Params) {
   try {
     requireEditAccess();
-    const client = getServerClient();
-    const { error } = await client.from("players").delete().eq("id", params.id);
-
-    if (error) {
-      throw error;
-    }
+    const sql = getSql();
+    await sql`delete from players where id = ${params.id}`;
 
     return NextResponse.json({ ok: true });
   } catch (error) {
