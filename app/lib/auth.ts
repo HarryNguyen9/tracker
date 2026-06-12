@@ -9,7 +9,7 @@ export function hasEditAccess() {
 
 export function requireEditAccess() {
   if (!hasEditAccess()) {
-    throw new Error("Edit access is required.");
+    throw new Error("Edit permission is needed.");
   }
 }
 

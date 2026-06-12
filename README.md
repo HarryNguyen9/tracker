@@ -7,12 +7,14 @@ A mobile-first Next.js app for tracking game results by player. It stores player
 - Add, rename, and delete players.
 - Delete a player and automatically remove that player's records through database cascade rules.
 - Add, edit, and delete records for each player.
-- Server-calculated Return and Profit values:
-  - `returnAmount = amount * rate`
-  - `profit = returnAmount - amount`
+- Server-calculated Return and Profit values based on Result:
+  - Win: `returnAmount = amount * rate`, `profit = returnAmount - amount`
+  - Loss: `returnAmount = 0`, `profit = -amount`
+  - Push: `returnAmount = amount`, `profit = 0`
 - Running Balance per player sorted by creation time.
 - Dashboard totals for Amount, Return, Profit, and record count.
 - VND display formatting with decimal Rate input.
+- Viewer Mode for reading data and Edit Mode unlocked by PIN for changes.
 - Loading, empty, and error states.
 - Edit protection with `ADMIN_PIN` and an httpOnly cookie.
 
@@ -44,7 +46,7 @@ ADMIN_PIN=choose-a-private-pin
 Tables created:
 
 - `players`
-- `records`
+- `records` with `result_type` values `win`, `loss`, or `push`
 
 No default players are inserted.
 

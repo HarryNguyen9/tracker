@@ -14,7 +14,7 @@ export async function GET() {
       order by created_at asc
     `) as PlayerRow[];
     const records = (await sql`
-      select id, player_id, amount, rate, return_amount, profit, note, created_at, updated_at
+      select id, player_id, amount, rate, result_type, return_amount, profit, note, created_at, updated_at
       from records
       order by created_at asc
     `) as RecordRow[];
@@ -58,6 +58,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ player: mapPlayer(player) }, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
-    return jsonError(error, message.includes("access") ? 401 : 400);
+    return jsonError(error, message.includes("permission") ? 401 : 400);
   }
 }

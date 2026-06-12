@@ -2,19 +2,42 @@
 
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import { formatDate, formatNumber, formatVnd } from "../app/lib/format";
-import type { PlayerSummary, RecordWithBalance } from "../app/lib/types";
+import type { PlayerSummary, RecordWithBalance, ResultType } from "../app/lib/types";
 
 type LoadState = "idle" | "loading" | "ready" | "error";
-type RecordDraft = { amount: string; rate: string; note: string };
+type RecordDraft = { amount: string; rate: string; note: string; resultType: ResultType };
+type PendingUnlockAction = "player" | "record" | null;
 
-const emptyRecordDraft: RecordDraft = { amount: "", rate: "", note: "" };
+const emptyRecordDraft: RecordDraft = { amount: "", rate: "", note: "", resultType: "win" };
+const resultLabels: Record<ResultType, string> = { win: "Win", loss: "Loss", push: "Push" };
+const resultOptions: ResultType[] = ["win", "loss", "push"];
+
+class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
 
 async function readJson<T>(response: Response): Promise<T> {
   const data = await response.json();
   if (!response.ok) {
-    throw new Error(data.error ?? "Request failed.");
+    throw new ApiError(data.error ?? "Request failed.", response.status);
   }
   return data as T;
+}
+
+function calculatePreview(amount: number, rate: number, resultType: ResultType) {
+  if (resultType === "loss") {
+    return { returnAmount: 0, profit: -amount };
+  }
+  if (resultType === "push") {
+    return { returnAmount: amount, profit: 0 };
+  }
+  const returnAmount = amount * rate;
+  return { returnAmount, profit: returnAmount - amount };
 }
 
 export default function AppShell() {
@@ -25,6 +48,10 @@ export default function AppShell() {
   const [recordState, setRecordState] = useState<LoadState>("idle");
   const [error, setError] = useState("");
   const [recordError, setRecordError] = useState("");
+  const [editMode, setEditMode] = useState(false);
+  const [addPlayerOpen, setAddPlayerOpen] = useState(false);
+  const [recordFormOpen, setRecordFormOpen] = useState(false);
+  const [pendingUnlockAction, setPendingUnlockAction] = useState<PendingUnlockAction>(null);
   const [playerName, setPlayerName] = useState("");
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -38,8 +65,10 @@ export default function AppShell() {
   const selectedPlayer = players.find((player) => player.id === selectedId) ?? null;
   const amountPreview = Number(draft.amount || 0);
   const ratePreview = Number(draft.rate || 0);
-  const previewReturn = Number.isFinite(amountPreview) && Number.isFinite(ratePreview) ? amountPreview * ratePreview : 0;
-  const previewProfit = previewReturn - (Number.isFinite(amountPreview) ? amountPreview : 0);
+  const safeAmount = Number.isFinite(amountPreview) ? amountPreview : 0;
+  const safeRate = Number.isFinite(ratePreview) ? ratePreview : 0;
+  const currentPreview = calculatePreview(safeAmount, safeRate, draft.resultType);
+  const allPreviews = resultOptions.map((resultType) => ({ resultType, ...calculatePreview(safeAmount, safeRate, resultType) }));
   const totalSummary = useMemo(
     () => ({
       amount: players.reduce((sum, player) => sum + player.totalAmount, 0),
@@ -86,11 +115,26 @@ export default function AppShell() {
 
   useEffect(() => {
     loadPlayers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     loadRecords(selectedId);
   }, [selectedId]);
+
+  function openPinFor(action: PendingUnlockAction = null) {
+    setPendingUnlockAction(action);
+    setPinError("");
+    setPinOpen(true);
+  }
+
+  function requestEdit(action: () => void, pendingAction: PendingUnlockAction = null) {
+    if (editMode) {
+      action();
+      return;
+    }
+    openPinFor(pendingAction);
+  }
 
   async function verifyPin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -106,8 +150,18 @@ export default function AppShell() {
       );
       setPin("");
       setPinOpen(false);
-    } catch (err) {
-      setPinError(err instanceof Error ? err.message : "PIN check failed.");
+      setEditMode(true);
+      if (pendingUnlockAction === "player") {
+        setAddPlayerOpen(true);
+      }
+      if (pendingUnlockAction === "record") {
+        setRecordFormOpen(true);
+      }
+      setPendingUnlockAction(null);
+      await loadPlayers(selectedId);
+      await loadRecords(selectedId);
+    } catch {
+      setPinError("Invalid PIN.");
     } finally {
       setBusy(false);
     }
@@ -118,11 +172,12 @@ export default function AppShell() {
     try {
       await action();
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Action failed.";
-      if (message.toLowerCase().includes("access")) {
-        setPinOpen(true);
+      if (err instanceof ApiError && err.status === 401) {
+        setEditMode(false);
+        openPinFor(null);
+        return;
       }
-      setError(message);
+      setError(err instanceof Error ? err.message : "Action failed.");
     } finally {
       setBusy(false);
     }
@@ -130,6 +185,10 @@ export default function AppShell() {
 
   async function createPlayer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!editMode) {
+      openPinFor("player");
+      return;
+    }
     await runEdit(async () => {
       const data = await readJson<{ player: { id: string } }>(
         await fetch("/api/players", {
@@ -139,6 +198,7 @@ export default function AppShell() {
         }),
       );
       setPlayerName("");
+      setAddPlayerOpen(false);
       await loadPlayers(data.player.id);
     });
   }
@@ -166,9 +226,12 @@ export default function AppShell() {
     });
   }
 
-  async function saveRecord(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function saveRecord(resultType: ResultType) {
     if (!selectedId) return;
+    if (!editMode) {
+      openPinFor("record");
+      return;
+    }
     setRecordError("");
     await runEdit(async () => {
       const url = editingRecordId ? `/api/records/${editingRecordId}` : "/api/records";
@@ -176,11 +239,12 @@ export default function AppShell() {
         await fetch(url, {
           method: editingRecordId ? "PATCH" : "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...draft, playerId: selectedId }),
+          body: JSON.stringify({ ...draft, resultType, playerId: selectedId }),
         }),
       );
       setDraft(emptyRecordDraft);
       setEditingRecordId(null);
+      setRecordFormOpen(false);
       await loadRecords(selectedId);
       await loadPlayers(selectedId);
     });
@@ -197,24 +261,40 @@ export default function AppShell() {
 
   function startEditRecord(record: RecordWithBalance) {
     setEditingRecordId(record.id);
-    setDraft({ amount: String(record.amount), rate: String(record.rate), note: record.note ?? "" });
+    setDraft({ amount: String(record.amount), rate: String(record.rate), note: record.note ?? "", resultType: record.resultType });
+    setRecordFormOpen(true);
+  }
+
+  function resetRecordForm() {
+    setEditingRecordId(null);
+    setDraft(emptyRecordDraft);
+    setRecordFormOpen(false);
   }
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
       <header className="rounded-[2rem] bg-ink p-6 text-white shadow-soft">
-        <p className="text-sm font-medium uppercase tracking-[0.3em] text-emerald-200">Game Tracker</p>
-        <h1 className="mt-3 text-3xl font-bold sm:text-5xl">Game Result Tracker</h1>
+        <div className="flex flex-wrap items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium uppercase tracking-[0.3em] text-emerald-200">Game Tracker</p>
+            <h1 className="mt-3 text-3xl font-bold sm:text-5xl">Game Result Tracker</h1>
+          </div>
+          <span className={`rounded-full px-4 py-2 text-sm font-bold ${editMode ? "bg-emerald-300 text-ink" : "bg-white/15 text-white"}`}>
+            {editMode ? "Edit Mode" : "Viewer Mode"}
+          </span>
+        </div>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-emerald-50/80">
           Track Amount, Rate, Return, Profit, and Balance for every player in one simple mobile-first dashboard.
         </p>
-        <button
-          className="mt-5 rounded-full bg-white px-5 py-3 text-sm font-bold text-ink shadow-sm active:scale-95"
-          onClick={() => setPinOpen(true)}
-          type="button"
-        >
-          Enter admin PIN
-        </button>
+        {!editMode ? (
+          <button
+            className="mt-5 rounded-full bg-white px-5 py-3 text-sm font-bold text-ink shadow-sm active:scale-95"
+            onClick={() => openPinFor(null)}
+            type="button"
+          >
+            Enter Edit PIN
+          </button>
+        ) : null}
       </header>
 
       {error ? <StateBox tone="error" text={error} /> : null}
@@ -236,25 +316,42 @@ export default function AppShell() {
             {loadState === "loading" ? <span className="ml-auto text-sm text-slate-500">Loading...</span> : null}
           </div>
 
-          <form className="mb-4 flex gap-2" onSubmit={createPlayer}>
-            <input
-              className="min-h-12 flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-4 outline-none focus:border-emerald-500"
-              onChange={(event) => setPlayerName(event.target.value)}
-              placeholder="Player name"
-              value={playerName}
-            />
-            <button className="rounded-2xl bg-emerald-600 px-4 font-bold text-white active:scale-95" disabled={busy} type="submit">
-              Add
-            </button>
-          </form>
+          <button
+            className="mb-4 w-full rounded-2xl bg-emerald-600 px-4 py-3 font-bold text-white active:scale-95"
+            onClick={() => requestEdit(() => setAddPlayerOpen(true), "player")}
+            type="button"
+          >
+            Add Player
+          </button>
+
+          {addPlayerOpen && editMode ? (
+            <form className="mb-4 flex gap-2" onSubmit={createPlayer}>
+              <input
+                className="min-h-12 flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-4 outline-none focus:border-emerald-500"
+                onChange={(event) => setPlayerName(event.target.value)}
+                placeholder="Player name"
+                value={playerName}
+              />
+              <button className="rounded-2xl bg-ink px-4 font-bold text-white active:scale-95" disabled={busy} type="submit">
+                Save
+              </button>
+              <button className="rounded-2xl bg-slate-100 px-4 font-bold" onClick={() => setAddPlayerOpen(false)} type="button">
+                Cancel
+              </button>
+            </form>
+          ) : null}
 
           {loadState === "error" ? <StateBox tone="error" text="Could not load dashboard." /> : null}
           {loadState !== "loading" && players.length === 0 ? (
             <div className="rounded-3xl border border-dashed border-emerald-300 bg-mint p-6 text-center">
               <p className="text-lg font-bold">No players yet</p>
-              <p className="mt-2 text-sm text-slate-600">Thêm người chơi đầu tiên to start tracking results.</p>
-              <button className="mt-4 rounded-full bg-ink px-5 py-3 text-sm font-bold text-white" onClick={() => setPinOpen(true)} type="button">
-                Thêm người chơi đầu tiên
+              <p className="mt-2 text-sm text-slate-600">Add your first player to start tracking game results.</p>
+              <button
+                className="mt-4 rounded-full bg-ink px-5 py-3 text-sm font-bold text-white"
+                onClick={() => requestEdit(() => setAddPlayerOpen(true), "player")}
+                type="button"
+              >
+                Add First Player
               </button>
             </div>
           ) : null}
@@ -288,34 +385,36 @@ export default function AppShell() {
                   <MiniMetric label="Profit" value={formatVnd(player.totalProfit)} />
                   <MiniMetric label="Balance" value={formatVnd(player.balance)} />
                 </div>
-                <div className="mt-4 flex gap-2">
-                  {renamingId === player.id ? (
-                    <>
-                      <button className="flex-1 rounded-2xl bg-ink py-2 text-sm font-bold text-white" onClick={() => saveRename(player.id)} type="button">
-                        Save
-                      </button>
-                      <button className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold" onClick={() => setRenamingId(null)} type="button">
-                        Cancel
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold"
-                        onClick={() => {
-                          setRenamingId(player.id);
-                          setRenameValue(player.name);
-                        }}
-                        type="button"
-                      >
-                        Edit
-                      </button>
-                      <button className="flex-1 rounded-2xl bg-rose-50 py-2 text-sm font-bold text-rose-700" onClick={() => removePlayer(player)} type="button">
-                        Delete
-                      </button>
-                    </>
-                  )}
-                </div>
+                {editMode ? (
+                  <div className="mt-4 flex gap-2">
+                    {renamingId === player.id ? (
+                      <>
+                        <button className="flex-1 rounded-2xl bg-ink py-2 text-sm font-bold text-white" onClick={() => saveRename(player.id)} type="button">
+                          Save
+                        </button>
+                        <button className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold" onClick={() => setRenamingId(null)} type="button">
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold"
+                          onClick={() => {
+                            setRenamingId(player.id);
+                            setRenameValue(player.name);
+                          }}
+                          type="button"
+                        >
+                          Edit Player
+                        </button>
+                        <button className="flex-1 rounded-2xl bg-rose-50 py-2 text-sm font-bold text-rose-700" onClick={() => removePlayer(player)} type="button">
+                          Delete Player
+                        </button>
+                      </>
+                    )}
+                  </div>
+                ) : null}
               </article>
             ))}
           </div>
@@ -332,63 +431,98 @@ export default function AppShell() {
                 {recordState === "loading" ? <span className="ml-auto text-sm text-slate-500">Loading...</span> : null}
               </div>
 
-              <form className="rounded-3xl bg-slate-50 p-4" onSubmit={saveRecord}>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Field label="Amount">
-                    <input
-                      className="input"
-                      inputMode="decimal"
-                      min="0"
-                      onChange={(event) => setDraft((current) => ({ ...current, amount: event.target.value }))}
-                      placeholder="100000"
-                      step="any"
-                      type="number"
-                      value={draft.amount}
-                    />
-                  </Field>
-                  <Field label="Rate">
-                    <input
-                      className="input"
-                      inputMode="decimal"
-                      min="0"
-                      onChange={(event) => setDraft((current) => ({ ...current, rate: event.target.value }))}
-                      placeholder="1.95"
-                      step="any"
-                      type="number"
-                      value={draft.rate}
-                    />
-                  </Field>
-                  <Field label="Note">
-                    <textarea
-                      className="input min-h-24 resize-none sm:col-span-2"
-                      onChange={(event) => setDraft((current) => ({ ...current, note: event.target.value }))}
-                      placeholder="Optional note"
-                      value={draft.note}
-                    />
-                  </Field>
-                </div>
-                <div className="mt-4 grid gap-2 rounded-2xl bg-white p-3 text-sm sm:grid-cols-2">
-                  <MiniMetric label="Return preview" value={formatVnd(previewReturn)} />
-                  <MiniMetric label="Profit preview" value={formatVnd(previewProfit)} />
-                </div>
-                <div className="mt-4 flex gap-2">
-                  <button className="flex-1 rounded-2xl bg-emerald-600 py-3 font-bold text-white active:scale-95" disabled={busy} type="submit">
-                    {editingRecordId ? "Update record" : "Add record"}
-                  </button>
-                  {editingRecordId ? (
-                    <button
-                      className="rounded-2xl bg-slate-200 px-4 font-bold"
-                      onClick={() => {
-                        setEditingRecordId(null);
-                        setDraft(emptyRecordDraft);
-                      }}
-                      type="button"
-                    >
+              <button
+                className="mb-4 w-full rounded-2xl bg-emerald-600 py-3 font-bold text-white active:scale-95"
+                onClick={() => requestEdit(() => setRecordFormOpen(true), "record")}
+                type="button"
+              >
+                Add Record
+              </button>
+
+              {recordFormOpen && editMode ? (
+                <form className="rounded-3xl bg-slate-50 p-4" onSubmit={(event) => event.preventDefault()}>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Field label="Amount">
+                      <input
+                        className="input"
+                        inputMode="decimal"
+                        min="0"
+                        onChange={(event) => setDraft((current) => ({ ...current, amount: event.target.value }))}
+                        placeholder="100000"
+                        step="any"
+                        type="number"
+                        value={draft.amount}
+                      />
+                    </Field>
+                    <Field label="Rate">
+                      <input
+                        className="input"
+                        inputMode="decimal"
+                        min="0"
+                        onChange={(event) => setDraft((current) => ({ ...current, rate: event.target.value }))}
+                        placeholder="1.95"
+                        step="any"
+                        type="number"
+                        value={draft.rate}
+                      />
+                    </Field>
+                    <Field label="Result">
+                      <div className="grid grid-cols-3 gap-2">
+                        {resultOptions.map((resultType) => (
+                          <button
+                            className={`rounded-2xl px-3 py-3 text-sm font-bold ${draft.resultType === resultType ? "bg-ink text-white" : "bg-white text-ink"}`}
+                            key={resultType}
+                            onClick={() => setDraft((current) => ({ ...current, resultType }))}
+                            type="button"
+                          >
+                            {resultLabels[resultType]}
+                          </button>
+                        ))}
+                      </div>
+                    </Field>
+                    <Field label="Note">
+                      <textarea
+                        className="input min-h-24 resize-none sm:col-span-2"
+                        onChange={(event) => setDraft((current) => ({ ...current, note: event.target.value }))}
+                        placeholder="Optional note"
+                        value={draft.note}
+                      />
+                    </Field>
+                  </div>
+                  <div className="mt-4 rounded-2xl bg-white p-3 text-sm">
+                    <p className="font-bold text-ink">Live preview</p>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                      {allPreviews.map((preview) => (
+                        <div className={`rounded-2xl p-3 ${draft.resultType === preview.resultType ? "bg-emerald-50 ring-2 ring-emerald-500" : "bg-slate-50"}`} key={preview.resultType}>
+                          <p className="font-bold">If {resultLabels[preview.resultType]}</p>
+                          <p className="mt-1 text-slate-600">Return = {formatVnd(preview.returnAmount)}</p>
+                          <p className="text-slate-600">Profit = {formatVnd(preview.profit)}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      <MiniMetric label="Selected Return" value={formatVnd(currentPreview.returnAmount)} />
+                      <MiniMetric label="Selected Profit" value={formatVnd(currentPreview.profit)} />
+                    </div>
+                  </div>
+                  <div className="mt-4 grid gap-2 sm:grid-cols-4">
+                    {resultOptions.map((resultType) => (
+                      <button
+                        className="rounded-2xl bg-emerald-600 py-3 font-bold text-white active:scale-95"
+                        disabled={busy}
+                        key={resultType}
+                        onClick={() => saveRecord(resultType)}
+                        type="button"
+                      >
+                        Save as {resultLabels[resultType]}
+                      </button>
+                    ))}
+                    <button className="rounded-2xl bg-slate-200 px-4 font-bold" onClick={resetRecordForm} type="button">
                       Cancel
                     </button>
-                  ) : null}
-                </div>
-              </form>
+                  </div>
+                </form>
+              ) : null}
 
               {recordError ? <StateBox tone="error" text={recordError} /> : null}
               {recordState !== "loading" && records.length === 0 ? <StateBox tone="empty" text="No records yet. Add the first record for this player." /> : null}
@@ -399,6 +533,7 @@ export default function AppShell() {
                     <div className="flex items-start gap-3">
                       <div>
                         <p className="text-sm text-slate-500">{formatDate(record.createdAt)}</p>
+                        <p className="mt-1 text-sm font-bold text-emerald-700">Result: {resultLabels[record.resultType]}</p>
                         {record.note ? <p className="mt-1 font-medium">{record.note}</p> : <p className="mt-1 text-sm text-slate-400">No note</p>}
                       </div>
                       <div className="ml-auto"><ProfitBadge value={record.profit} /></div>
@@ -410,14 +545,16 @@ export default function AppShell() {
                       <MiniMetric label="Profit" value={formatVnd(record.profit)} />
                       <MiniMetric label="Balance" value={formatVnd(record.balance)} />
                     </div>
-                    <div className="mt-4 flex gap-2">
-                      <button className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold" onClick={() => startEditRecord(record)} type="button">
-                        Edit
-                      </button>
-                      <button className="flex-1 rounded-2xl bg-rose-50 py-2 text-sm font-bold text-rose-700" onClick={() => removeRecord(record)} type="button">
-                        Delete
-                      </button>
-                    </div>
+                    {editMode ? (
+                      <div className="mt-4 flex gap-2">
+                        <button className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold" onClick={() => startEditRecord(record)} type="button">
+                          Edit Record
+                        </button>
+                        <button className="flex-1 rounded-2xl bg-rose-50 py-2 text-sm font-bold text-rose-700" onClick={() => removeRecord(record)} type="button">
+                          Delete Record
+                        </button>
+                      </div>
+                    ) : null}
                   </article>
                 ))}
               </div>
@@ -431,8 +568,8 @@ export default function AppShell() {
       {pinOpen ? (
         <div className="fixed inset-0 z-50 flex items-end bg-ink/50 p-4 sm:items-center sm:justify-center">
           <form className="w-full rounded-[1.75rem] bg-white p-5 shadow-soft sm:max-w-sm" onSubmit={verifyPin}>
-            <h2 className="text-xl font-bold">Admin PIN</h2>
-            <p className="mt-2 text-sm text-slate-600">Enter the PIN to add, edit, or delete players and records.</p>
+            <h2 className="text-xl font-bold">Enter Edit PIN</h2>
+            <p className="mt-2 text-sm text-slate-600">Enter the edit PIN to make changes.</p>
             <input
               className="mt-4 min-h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 outline-none focus:border-emerald-500"
               onChange={(event) => setPin(event.target.value)}
@@ -442,11 +579,11 @@ export default function AppShell() {
             />
             {pinError ? <p className="mt-2 text-sm font-semibold text-rose-700">{pinError}</p> : null}
             <div className="mt-4 flex gap-2">
-              <button className="flex-1 rounded-2xl bg-ink py-3 font-bold text-white" disabled={busy} type="submit">
-                Unlock edits
-              </button>
               <button className="rounded-2xl bg-slate-100 px-4 font-bold" onClick={() => setPinOpen(false)} type="button">
-                Close
+                Cancel
+              </button>
+              <button className="flex-1 rounded-2xl bg-ink py-3 font-bold text-white" disabled={busy} type="submit">
+                Unlock Edit Mode
               </button>
             </div>
           </form>

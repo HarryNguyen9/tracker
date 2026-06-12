@@ -1,4 +1,5 @@
 import { neon } from "@neondatabase/serverless";
+import type { ResultType } from "./types";
 
 export type PlayerRow = {
   id: string;
@@ -12,6 +13,7 @@ export type RecordRow = {
   player_id: string;
   amount: string | number;
   rate: string | number;
+  result_type: ResultType;
   return_amount: string | number;
   profit: string | number;
   note: string | null;

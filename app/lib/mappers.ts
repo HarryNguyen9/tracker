@@ -24,6 +24,7 @@ export function mapRecord(row: RecordRow): RecordItem {
     playerId: row.player_id,
     amount: toNumber(row.amount),
     rate: toNumber(row.rate),
+    resultType: row.result_type,
     returnAmount: toNumber(row.return_amount),
     profit: toNumber(row.profit),
     note: row.note,

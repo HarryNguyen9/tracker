@@ -27,7 +27,7 @@ export async function PATCH(request: Request, { params }: Params) {
     return NextResponse.json({ player: mapPlayer(player) });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
-    return jsonError(error, message.includes("access") ? 401 : 400);
+    return jsonError(error, message.includes("permission") ? 401 : 400);
   }
 }
 
@@ -40,6 +40,6 @@ export async function DELETE(_request: Request, { params }: Params) {
     return NextResponse.json({ ok: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
-    return jsonError(error, message.includes("access") ? 401 : 400);
+    return jsonError(error, message.includes("permission") ? 401 : 400);
   }
 }

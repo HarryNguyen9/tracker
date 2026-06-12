@@ -1,3 +1,5 @@
+export type ResultType = "win" | "loss" | "push";
+
 export type Player = {
   id: string;
   name: string;
@@ -10,6 +12,7 @@ export type RecordItem = {
   playerId: string;
   amount: number;
   rate: number;
+  resultType: ResultType;
   returnAmount: number;
   profit: number;
   note: string | null;
