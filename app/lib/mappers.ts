@@ -29,6 +29,8 @@ export function mapRecord(row: RecordRow): RecordItem {
     returnAmount: toNumber(row.return_amount),
     profit: toNumber(row.profit),
     note: row.note,
+    deletedAt: row.deleted_at ? toIsoText(row.deleted_at) : null,
+    deleteReason: row.delete_reason,
     createdAt: toIsoText(row.created_at),
     updatedAt: toIsoText(row.updated_at),
   };

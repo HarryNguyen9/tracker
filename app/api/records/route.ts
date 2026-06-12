@@ -10,6 +10,7 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const playerId = searchParams.get("playerId");
+    const trash = searchParams.get("trash") === "1";
 
     if (!playerId) {
       return jsonError(new Error("playerId is required."));
@@ -17,14 +18,23 @@ export async function GET(request: Request) {
 
     const sql = getSql();
     await ensureTrackerSchema(sql);
-    const rows = (await sql`
-      select id, player_id, amount, rate, status, result_type, return_amount, profit, note, created_at, updated_at
-      from records
-      where player_id = ${playerId}
-      order by created_at asc
-    `) as RecordRow[];
+    const rows = trash
+      ? ((await sql`
+          select id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, created_at, updated_at
+          from records
+          where player_id = ${playerId}
+            and deleted_at is not null
+          order by deleted_at desc
+        `) as RecordRow[])
+      : ((await sql`
+          select id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, created_at, updated_at
+          from records
+          where player_id = ${playerId}
+            and deleted_at is null
+          order by created_at asc
+        `) as RecordRow[]);
 
-    const records = withBalance(rows.map(mapRecord));
+    const records = trash ? rows.map(mapRecord).map((record) => ({ ...record, balance: null })) : withBalance(rows.map(mapRecord));
     return NextResponse.json({ records });
   } catch (error) {
     console.error("Unable to load records", error);
@@ -52,7 +62,7 @@ export async function POST(request: Request) {
     const [record] = (await sql`
       insert into records (player_id, amount, rate, status, result_type, return_amount, profit, note)
       values (${playerId}, ${amount}, ${rate}, 'pending', null, 0, 0, ${note})
-      returning id, player_id, amount, rate, status, result_type, return_amount, profit, note, created_at, updated_at
+      returning id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, created_at, updated_at
     `) as RecordRow[];
 
     return NextResponse.json({ record: mapRecord(record) }, { status: 201 });

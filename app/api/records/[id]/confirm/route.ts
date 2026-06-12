@@ -16,9 +16,10 @@ export async function PATCH(request: Request, { params }: Params) {
     const sql = getSql();
     await ensureTrackerSchema(sql);
     const [existing] = (await sql`
-      select id, player_id, amount, rate, status, result_type, return_amount, profit, note, created_at, updated_at
+      select id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, created_at, updated_at
       from records
       where id = ${params.id}
+        and deleted_at is null
     `) as RecordRow[];
 
     if (!existing) {
@@ -36,7 +37,7 @@ export async function PATCH(request: Request, { params }: Params) {
           profit = ${profit},
           updated_at = now()
       where id = ${params.id}
-      returning id, player_id, amount, rate, status, result_type, return_amount, profit, note, created_at, updated_at
+      returning id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, created_at, updated_at
     `) as RecordRow[];
 
     return NextResponse.json({ record: mapRecord(record) });

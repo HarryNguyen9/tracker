@@ -18,6 +18,8 @@ export type RecordItem = {
   returnAmount: number;
   profit: number;
   note: string | null;
+  deletedAt: string | null;
+  deleteReason: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -30,6 +32,7 @@ export type PlayerSummary = Player & {
   recordCount: number;
   finalizedRecordCount: number;
   pendingRecordCount: number;
+  trashedRecordCount: number;
 };
 
 export type RecordWithBalance = RecordItem & {

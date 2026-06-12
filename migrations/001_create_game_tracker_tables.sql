@@ -17,6 +17,8 @@ create table if not exists records (
   return_amount numeric not null default 0,
   profit numeric not null default 0,
   note text,
+  deleted_at timestamptz,
+  delete_reason text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -26,6 +28,12 @@ alter table records
 
 alter table records
   add column if not exists result_type text;
+
+alter table records
+  add column if not exists deleted_at timestamptz;
+
+alter table records
+  add column if not exists delete_reason text;
 
 alter table records
   alter column result_type drop not null;
@@ -57,3 +65,5 @@ alter table records
   check (result_type is null or result_type in ('win', 'loss', 'draw'));
 
 create index if not exists records_player_id_created_at_idx on records (player_id, created_at);
+
+create index if not exists records_player_id_deleted_at_idx on records (player_id, deleted_at);

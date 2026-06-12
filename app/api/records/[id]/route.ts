@@ -4,7 +4,7 @@ import { getSql, type RecordRow } from "../../../lib/db";
 import { jsonError } from "../../../lib/http";
 import { mapRecord } from "../../../lib/mappers";
 import { ensureTrackerSchema } from "../../../lib/schema";
-import { calculateRecordValues, cleanOptionalText, parseGreaterThanZeroNumber, parseNonNegativeNumber, parseResultType } from "../../../lib/validation";
+import { calculateRecordValues, cleanOptionalText, cleanText, parseGreaterThanZeroNumber, parseNonNegativeNumber, parseResultType } from "../../../lib/validation";
 
 type Params = { params: { id: string } };
 
@@ -16,9 +16,10 @@ export async function PATCH(request: Request, { params }: Params) {
     const sql = getSql();
     await ensureTrackerSchema(sql);
     const [existing] = (await sql`
-      select id, player_id, amount, rate, status, result_type, return_amount, profit, note, created_at, updated_at
+      select id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, created_at, updated_at
       from records
       where id = ${params.id}
+        and deleted_at is null
     `) as RecordRow[];
 
     if (!existing) {
@@ -39,7 +40,7 @@ export async function PATCH(request: Request, { params }: Params) {
             profit = 0,
             updated_at = now()
         where id = ${params.id}
-        returning id, player_id, amount, rate, status, result_type, return_amount, profit, note, created_at, updated_at
+        returning id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, created_at, updated_at
       `) as RecordRow[];
       return NextResponse.json({ record: mapRecord(record) });
     }
@@ -63,7 +64,7 @@ export async function PATCH(request: Request, { params }: Params) {
           note = ${note},
           updated_at = now()
       where id = ${params.id}
-      returning id, player_id, amount, rate, status, result_type, return_amount, profit, note, created_at, updated_at
+      returning id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, created_at, updated_at
     `) as RecordRow[];
 
     return NextResponse.json({ record: mapRecord(record) });
@@ -73,12 +74,26 @@ export async function PATCH(request: Request, { params }: Params) {
   }
 }
 
-export async function DELETE(_request: Request, { params }: Params) {
+export async function DELETE(request: Request, { params }: Params) {
   try {
     requireEditAccess();
+    const body = await request.json().catch(() => ({}));
+    const reason = cleanText(body.reason, "Delete reason");
     const sql = getSql();
     await ensureTrackerSchema(sql);
-    await sql`delete from records where id = ${params.id}`;
+    const [record] = (await sql`
+      update records
+      set deleted_at = now(),
+          delete_reason = ${reason},
+          updated_at = now()
+      where id = ${params.id}
+        and deleted_at is null
+      returning id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, created_at, updated_at
+    `) as RecordRow[];
+
+    if (!record) {
+      return jsonError(new Error("Record was not found."), 404);
+    }
 
     return NextResponse.json({ ok: true });
   } catch (error) {

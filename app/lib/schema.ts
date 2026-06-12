@@ -36,6 +36,8 @@ async function applyTrackerSchema(sql: Sql) {
       return_amount numeric not null default 0,
       profit numeric not null default 0,
       note text,
+      deleted_at timestamptz,
+      delete_reason text,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
     )
@@ -43,6 +45,8 @@ async function applyTrackerSchema(sql: Sql) {
 
   await sql`alter table records add column if not exists status text not null default 'pending'`;
   await sql`alter table records add column if not exists result_type text`;
+  await sql`alter table records add column if not exists deleted_at timestamptz`;
+  await sql`alter table records add column if not exists delete_reason text`;
   await sql`alter table records alter column result_type drop not null`;
   await sql`alter table records alter column result_type drop default`;
   await sql`update records set result_type = 'draw' where result_type = 'pu' || 'sh'`;
@@ -65,4 +69,5 @@ async function applyTrackerSchema(sql: Sql) {
     check (result_type is null or result_type in ('win', 'loss', 'draw'))
   `;
   await sql`create index if not exists records_player_id_created_at_idx on records (player_id, created_at)`;
+  await sql`create index if not exists records_player_id_deleted_at_idx on records (player_id, deleted_at)`;
 }

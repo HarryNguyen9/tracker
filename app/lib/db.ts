@@ -18,6 +18,8 @@ export type RecordRow = {
   return_amount: string | number;
   profit: string | number;
   note: string | null;
+  deleted_at: string | Date | null;
+  delete_reason: string | null;
   created_at: string | Date;
   updated_at: string | Date;
 };

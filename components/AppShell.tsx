@@ -12,6 +12,7 @@ type PendingDelete = { type: "player"; player: PlayerSummary } | { type: "record
 const emptyRecordDraft: RecordDraft = { amount: "", rate: "", note: "" };
 const resultLabels: Record<ResultType, string> = { win: "Win", loss: "Loss", draw: "Draw" };
 const resultOptions: ResultType[] = ["win", "loss", "draw"];
+const quickAmountIncrements = [1, 2, 5, 10, 20];
 
 function getExpectedReturn(amount: number, rate: number) {
   return amount * rate;
@@ -20,6 +21,50 @@ function getExpectedReturn(amount: number, rate: number) {
 function parseDraftNumber(value: string) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+type CsvValue = string | number | null | undefined;
+
+function csvCell(value: CsvValue) {
+  const text = value === null || value === undefined ? "" : String(value);
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function downloadCsv(filename: string, rows: CsvValue[][]) {
+  const csv = rows.map((row) => row.map(csvCell).join(",")).join("\r\n");
+  const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function fileSafeName(value: string) {
+  return value.trim().replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "player";
+}
+
+function recordExportHeader() {
+  return ["Player", "Created At", "Status", "Result", "Amount", "Rate", "Expected Return", "Return", "Profit", "Balance", "Note"];
+}
+
+function recordExportRow(player: PlayerSummary, record: RecordWithBalance): CsvValue[] {
+  return [
+    player.name,
+    record.createdAt,
+    record.status,
+    record.resultType ?? "pending",
+    record.amount,
+    record.rate,
+    getExpectedReturn(record.amount, record.rate),
+    record.status === "pending" ? "" : record.returnAmount,
+    record.status === "pending" ? "" : record.profit,
+    record.balance ?? "",
+    record.note ?? "",
+  ];
 }
 
 class ApiError extends Error {
@@ -64,10 +109,24 @@ export default function AppShell() {
   const [busy, setBusy] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete>(null);
+  const [deleteReason, setDeleteReason] = useState("");
+  const [deleteReasonError, setDeleteReasonError] = useState("");
   const [expandedRecordId, setExpandedRecordId] = useState<string | null>(null);
+  const [trashOpen, setTrashOpen] = useState(false);
+  const [trashRecords, setTrashRecords] = useState<RecordWithBalance[]>([]);
+  const [trashState, setTrashState] = useState<LoadState>("idle");
 
   const selectedPlayer = players.find((player) => player.id === selectedId) ?? null;
   const draftExpectedReturn = getExpectedReturn(parseDraftNumber(draft.amount), parseDraftNumber(draft.rate));
+  const recentAmounts = useMemo(() => {
+    const uniqueAmounts: number[] = [];
+    [...records].reverse().forEach((record) => {
+      if (!uniqueAmounts.includes(record.amount)) {
+        uniqueAmounts.push(record.amount);
+      }
+    });
+    return uniqueAmounts.slice(0, 4);
+  }, [records]);
   const totalSummary = useMemo(
     () => ({
       amount: selectedPlayer?.totalAmount ?? 0,
@@ -119,6 +178,25 @@ export default function AppShell() {
     }
   }
 
+  async function loadTrashRecords(playerId: string | null) {
+    if (!playerId) {
+      setTrashRecords([]);
+      return;
+    }
+
+    setTrashState("loading");
+    setRecordError("");
+    try {
+      const data = await readJson<{ records: RecordWithBalance[] }>(await fetch(`/api/records?playerId=${playerId}&trash=1`));
+      setTrashRecords(data.records);
+      setTrashState("ready");
+    } catch (err) {
+      console.error("Unable to load trash", err);
+      setRecordError(err instanceof ApiError ? err.message : "Unable to load trash. Please try again.");
+      setTrashState("error");
+    }
+  }
+
   useEffect(() => {
     loadPlayers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -136,6 +214,8 @@ export default function AppShell() {
   }, [darkMode]);
 
   useEffect(() => {
+    setTrashOpen(false);
+    setTrashRecords([]);
     loadRecords(selectedId);
   }, [selectedId]);
 
@@ -255,15 +335,33 @@ export default function AppShell() {
     if (!pendingDelete) return;
 
     const deleteTarget = pendingDelete;
+    const reason = deleteReason.trim();
+    if (deleteTarget.type === "record" && !reason) {
+      setDeleteReasonError("Delete reason is required.");
+      return;
+    }
+
     await runEdit(async () => {
       if (deleteTarget.type === "player") {
         await readJson(await fetch(`/api/players/${deleteTarget.player.id}`, { method: "DELETE" }));
         await loadPlayers(deleteTarget.player.id === selectedId ? null : selectedId);
       } else {
-        await readJson(await fetch(`/api/records/${deleteTarget.record.id}`, { method: "DELETE" }));
-        await Promise.all([loadRecords(selectedId, { silent: true }), loadPlayers(selectedId, { silent: true })]);
+        await readJson(
+          await fetch(`/api/records/${deleteTarget.record.id}`, {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ reason }),
+          }),
+        );
+        await Promise.all([
+          loadRecords(selectedId, { silent: true }),
+          loadPlayers(selectedId, { silent: true }),
+          trashOpen ? loadTrashRecords(selectedId) : Promise.resolve(),
+        ]);
       }
       setPendingDelete(null);
+      setDeleteReason("");
+      setDeleteReasonError("");
     });
   }
 
@@ -313,6 +411,8 @@ export default function AppShell() {
       return;
     }
     setPendingDelete({ type: "record", record });
+    setDeleteReason("");
+    setDeleteReasonError("");
   }
 
   function startEditRecord(record: RecordWithBalance) {
@@ -332,6 +432,66 @@ export default function AppShell() {
     setEditingRecordId(null);
     setDraft(emptyRecordDraft);
     setRecordFormOpen(false);
+  }
+
+  function addQuickAmount(value: number) {
+    setDraft((current) => ({
+      ...current,
+      amount: String(parseDraftNumber(current.amount) + value),
+    }));
+  }
+
+  function setRecentAmount(value: number) {
+    setDraft((current) => ({ ...current, amount: String(value) }));
+  }
+
+  async function toggleTrash() {
+    if (!selectedId) return;
+    const nextOpen = !trashOpen;
+    setTrashOpen(nextOpen);
+    if (nextOpen) {
+      await loadTrashRecords(selectedId);
+    }
+  }
+
+  function exportRecords() {
+    if (!selectedPlayer) return;
+    downloadCsv(`${fileSafeName(selectedPlayer.name)}-records.csv`, [recordExportHeader(), ...records.map((record) => recordExportRow(selectedPlayer, record))]);
+  }
+
+  function exportCurrentSession() {
+    if (!selectedPlayer) return;
+    downloadCsv(`${fileSafeName(selectedPlayer.name)}-current-session.csv`, [
+      ["Current Session"],
+      ["Player", selectedPlayer.name],
+      ["Total Amount", selectedPlayer.totalAmount],
+      ["Total Return", selectedPlayer.totalReturn],
+      ["Total Profit", selectedPlayer.totalProfit],
+      ["Balance", selectedPlayer.balance],
+      ["Finalized Records", selectedPlayer.finalizedRecordCount],
+      ["Pending Records", selectedPlayer.pendingRecordCount],
+      [],
+      recordExportHeader(),
+      ...records.map((record) => recordExportRow(selectedPlayer, record)),
+    ]);
+  }
+
+  async function exportAllData() {
+    setBusy(true);
+    setError("");
+    try {
+      const rows: CsvValue[][] = [recordExportHeader()];
+      for (const player of players) {
+        const data = await readJson<{ records: RecordWithBalance[] }>(await fetch(`/api/records?playerId=${player.id}`));
+        rows.push(...data.records.map((record) => recordExportRow(player, record)));
+      }
+      downloadCsv("game-tracker-all-data.csv", rows);
+    } catch (err) {
+      console.error("Unable to export data", err);
+      setError(err instanceof ApiError ? err.message : "Unable to export data. Please try again.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -453,7 +613,7 @@ export default function AppShell() {
                         <h3 className="text-lg font-bold">{player.name}</h3>
                       )}
                       <p className="text-sm text-slate-500 dark:text-slate-400">
-                        {player.finalizedRecordCount} finalized, {player.pendingRecordCount} pending
+                        {player.finalizedRecordCount} finalized, {player.pendingRecordCount} pending, {player.trashedRecordCount} trash
                       </p>
                     </div>
                     <div className="ml-auto"><ProfitBadge value={player.balance} /></div>
@@ -512,12 +672,89 @@ export default function AppShell() {
               </div>
 
               <button
+                className={`mb-4 w-full rounded-2xl border px-4 py-3 font-bold active:scale-95 ${
+                  trashOpen
+                    ? "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-400/20 dark:bg-rose-400/10 dark:text-rose-200"
+                    : "border-slate-200 bg-white text-ink dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-50"
+                }`}
+                onClick={toggleTrash}
+                type="button"
+              >
+                {trashOpen ? "Hide Trash" : `Trash (${selectedPlayer.trashedRecordCount})`}
+              </button>
+
+              <button
                 className="mb-4 w-full rounded-2xl bg-emerald-600 py-3 font-bold text-white active:scale-95"
                 onClick={() => requestEdit(() => setRecordFormOpen(true), "record")}
                 type="button"
               >
                 Add Record
               </button>
+
+              <div className="mb-4 grid gap-2 sm:grid-cols-3">
+                <button
+                  className="rounded-2xl bg-slate-100 px-3 py-3 text-sm font-bold active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white/10"
+                  disabled={records.length === 0}
+                  onClick={exportRecords}
+                  type="button"
+                >
+                  Export Records
+                </button>
+                <button
+                  className="rounded-2xl bg-slate-100 px-3 py-3 text-sm font-bold active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white/10"
+                  disabled={!selectedPlayer}
+                  onClick={exportCurrentSession}
+                  type="button"
+                >
+                  Export Current Session
+                </button>
+                <button
+                  className="rounded-2xl bg-slate-100 px-3 py-3 text-sm font-bold active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white/10"
+                  disabled={players.length === 0 || busy}
+                  onClick={exportAllData}
+                  type="button"
+                >
+                  Export All Data
+                </button>
+              </div>
+
+              {trashOpen ? (
+                <section className="mb-4 rounded-2xl border border-rose-100 bg-rose-50/70 p-4 dark:border-rose-400/20 dark:bg-rose-400/10">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h3 className="font-bold text-rose-800 dark:text-rose-100">Trash</h3>
+                      <p className="text-sm text-rose-700/80 dark:text-rose-200/80">Deleted records for this player.</p>
+                    </div>
+                    {trashState === "loading" ? <span className="text-sm font-semibold text-rose-700 dark:text-rose-200">Loading...</span> : null}
+                  </div>
+                  {trashState !== "loading" && trashRecords.length === 0 ? (
+                    <p className="mt-4 rounded-2xl bg-white/70 p-3 text-sm font-semibold text-rose-800 dark:bg-white/10 dark:text-rose-100">Trash is empty.</p>
+                  ) : null}
+                  <div className="mt-4 flex flex-col gap-3">
+                    {trashRecords.map((record) => (
+                      <article className="rounded-2xl border border-rose-100 bg-white p-3 dark:border-rose-400/20 dark:bg-[#121d19]" key={record.id}>
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-bold text-rose-800 dark:text-rose-100">{record.status === "pending" ? "Pending Record" : "Finalized Record"}</p>
+                            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Deleted: {record.deletedAt ? formatDate(record.deletedAt) : "-"}</p>
+                          </div>
+                          <ProfitBadge value={record.profit} />
+                        </div>
+                        <div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+                          <MiniMetric label="Amount" value={formatMoney(record.amount)} />
+                          <MiniMetric label="Rate" value={formatNumber(record.rate)} />
+                          <MiniMetric label="Result" value={record.resultType ? resultLabels[record.resultType] : "Pending"} />
+                          <MiniMetric label="Return" value={record.status === "pending" ? formatMoney(getExpectedReturn(record.amount, record.rate)) : formatMoney(record.returnAmount)} />
+                        </div>
+                        <div className="mt-3 rounded-2xl bg-rose-50 p-3 text-sm dark:bg-rose-400/10">
+                          <p className="text-xs font-bold uppercase tracking-wide text-rose-700 dark:text-rose-200">Delete Reason</p>
+                          <p className="mt-1 text-rose-900 dark:text-rose-50">{record.deleteReason}</p>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
 
               {recordFormOpen && editMode ? (
                 <form className="rounded-2xl border border-slate-100 bg-slate-50 p-4 dark:border-white/10 dark:bg-white/[0.04]" onSubmit={(event) => event.preventDefault()}>
@@ -534,6 +771,38 @@ export default function AppShell() {
                         value={draft.amount}
                       />
                     </Field>
+                    <div className="rounded-2xl border border-slate-100 bg-white p-3 dark:border-white/10 dark:bg-white/[0.04] sm:col-span-2">
+                      <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Quick Add Amount</p>
+                      <div className="mt-3 grid grid-cols-5 gap-2">
+                        {quickAmountIncrements.map((amount) => (
+                          <button
+                            className="rounded-xl bg-slate-100 py-2 text-sm font-bold text-ink active:scale-95 dark:bg-white/10 dark:text-slate-50"
+                            key={amount}
+                            onClick={() => addQuickAmount(amount)}
+                            type="button"
+                          >
+                            +{amount}
+                          </button>
+                        ))}
+                      </div>
+                      {recentAmounts.length > 0 ? (
+                        <>
+                          <p className="mt-4 text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Recently Used</p>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {recentAmounts.map((amount) => (
+                              <button
+                                className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-800 active:scale-95 dark:border-emerald-400/20 dark:bg-emerald-400/10 dark:text-emerald-200"
+                                key={amount}
+                                onClick={() => setRecentAmount(amount)}
+                                type="button"
+                              >
+                                {formatMoney(amount)}
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      ) : null}
+                    </div>
                     <Field label="Rate">
                       <input
                         className="input"
@@ -667,7 +936,7 @@ export default function AppShell() {
                           </button>
                         ) : null}
                         <button className="flex-1 rounded-2xl bg-rose-50 py-2 text-sm font-bold text-rose-700 dark:bg-rose-400/10 dark:text-rose-200" onClick={() => removeRecord(record)} type="button">
-                          Delete Record
+                          Move to Trash
                         </button>
                       </div>
                     ) : null}
@@ -686,11 +955,11 @@ export default function AppShell() {
 
       {pinOpen ? (
         <div className="fixed inset-0 z-50 flex items-end bg-ink/60 p-4 backdrop-blur-sm sm:items-center sm:justify-center">
-          <form className="w-full rounded-[1.5rem] border border-white/80 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-[#121d19] sm:max-w-sm" onSubmit={verifyPin}>
+          <form className="w-full rounded-[1.5rem] border border-white/80 bg-white p-5 shadow-soft dark:border-emerald-400/20 dark:bg-[#17231f] sm:max-w-sm" onSubmit={verifyPin}>
             <h2 className="text-xl font-bold">Enter Edit PIN</h2>
-            <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Enter the edit PIN to make changes.</p>
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Enter the edit PIN to make changes.</p>
             <input
-              className="mt-4 min-h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 outline-none focus:border-emerald-500 dark:border-white/10 dark:bg-[#0d1512]"
+              className="mt-4 min-h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-ink outline-none focus:border-emerald-500 dark:border-emerald-400/30 dark:bg-[#0d1512] dark:text-slate-50 dark:placeholder:text-slate-500"
               onChange={(event) => setPin(event.target.value)}
               placeholder="PIN"
               type="password"
@@ -698,10 +967,10 @@ export default function AppShell() {
             />
             {pinError ? <p className="mt-2 text-sm font-semibold text-rose-700">{pinError}</p> : null}
             <div className="mt-4 flex gap-2">
-              <button className="rounded-2xl bg-slate-100 px-4 font-bold dark:bg-white/10" onClick={() => setPinOpen(false)} type="button">
+              <button className="rounded-2xl bg-slate-100 px-4 font-bold dark:bg-white/12 dark:text-slate-100" onClick={() => setPinOpen(false)} type="button">
                 Cancel
               </button>
-              <button className="flex-1 rounded-2xl bg-ink py-3 font-bold text-white" disabled={busy} type="submit">
+              <button className="flex-1 rounded-2xl bg-emerald-600 py-3 font-bold text-white shadow-sm active:scale-95 disabled:opacity-60 dark:bg-emerald-500 dark:text-ink" disabled={busy} type="submit">
                 Unlock Edit Mode
               </button>
             </div>
@@ -715,12 +984,24 @@ export default function AppShell() {
           body={
             pendingDelete.type === "player"
               ? `This will delete ${pendingDelete.player.name} and all records for this player.`
-              : "This will delete this record from the player's history."
+              : "This will move this record out of the active history and into this player's trash."
           }
-          confirmLabel={pendingDelete.type === "player" ? "Delete Player" : "Delete Record"}
-          onCancel={() => setPendingDelete(null)}
+          confirmLabel={pendingDelete.type === "player" ? "Delete Player" : "Move to Trash"}
+          reason={pendingDelete.type === "record" ? deleteReason : undefined}
+          reasonError={pendingDelete.type === "record" ? deleteReasonError : undefined}
+          onCancel={() => {
+            setPendingDelete(null);
+            setDeleteReason("");
+            setDeleteReasonError("");
+          }}
           onConfirm={confirmDelete}
-          title={pendingDelete.type === "player" ? "Delete Player?" : "Delete Record?"}
+          onReasonChange={(value) => {
+            setDeleteReason(value);
+            if (value.trim()) {
+              setDeleteReasonError("");
+            }
+          }}
+          title={pendingDelete.type === "player" ? "Delete Player?" : "Move Record to Trash?"}
         />
       ) : null}
     </main>
@@ -733,6 +1014,9 @@ function ConfirmDialog({
   confirmLabel,
   onCancel,
   onConfirm,
+  onReasonChange,
+  reason,
+  reasonError,
   title,
 }: {
   body: string;
@@ -740,6 +1024,9 @@ function ConfirmDialog({
   confirmLabel: string;
   onCancel: () => void;
   onConfirm: () => void;
+  onReasonChange?: (value: string) => void;
+  reason?: string;
+  reasonError?: string;
   title: string;
 }) {
   return (
@@ -748,6 +1035,18 @@ function ConfirmDialog({
         <p className="text-sm font-bold uppercase tracking-wide text-rose-700 dark:text-rose-300">Confirm Action</p>
         <h2 className="mt-2 text-xl font-bold">{title}</h2>
         <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-400">{body}</p>
+        {reason !== undefined ? (
+          <label className="mt-4 flex flex-col gap-2 text-sm font-bold text-slate-700 dark:text-slate-300">
+            Delete Reason
+            <textarea
+              className="input min-h-24 resize-none"
+              onChange={(event) => onReasonChange?.(event.target.value)}
+              placeholder="Enter a reason before deleting"
+              value={reason}
+            />
+            {reasonError ? <span className="text-sm font-semibold text-rose-700 dark:text-rose-300">{reasonError}</span> : null}
+          </label>
+        ) : null}
         <div className="mt-5 flex gap-2">
           <button className="rounded-2xl bg-slate-100 px-4 font-bold dark:bg-white/10" disabled={busy} onClick={onCancel} type="button">
             Cancel
