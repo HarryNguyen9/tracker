@@ -3,10 +3,40 @@ import { requireEditAccess } from "../../../../lib/auth";
 import { getSql, type RecordRow } from "../../../../lib/db";
 import { jsonError } from "../../../../lib/http";
 import { mapRecord } from "../../../../lib/mappers";
-import { ensureTrackerSchema } from "../../../../lib/schema";
+import { ensureTrackerSchemaIfNeeded } from "../../../../lib/schema";
 import { calculateRecordValues, parseResultType } from "../../../../lib/validation";
 
 type Params = { params: { id: string } };
+type Sql = ReturnType<typeof getSql>;
+
+async function confirmStoredRecord(sql: Sql, id: string, resultType: ReturnType<typeof parseResultType>) {
+  const [existing] = (await sql`
+    select id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, created_at, updated_at
+    from records
+    where id = ${id}
+      and deleted_at is null
+  `) as RecordRow[];
+
+  if (!existing) {
+    return null;
+  }
+
+  const amount = Number(existing.amount);
+  const rate = Number(existing.rate);
+  const { returnAmount, profit } = calculateRecordValues(amount, rate, resultType);
+  const [record] = (await sql`
+    update records
+    set status = 'finalized',
+        result_type = ${resultType},
+        return_amount = ${returnAmount},
+        profit = ${profit},
+        updated_at = now()
+    where id = ${id}
+    returning id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, created_at, updated_at
+  `) as RecordRow[];
+
+  return record;
+}
 
 export async function PATCH(request: Request, { params }: Params) {
   try {
@@ -14,31 +44,19 @@ export async function PATCH(request: Request, { params }: Params) {
     const body = await request.json();
     const resultType = parseResultType(body.resultType);
     const sql = getSql();
-    await ensureTrackerSchema(sql);
-    const [existing] = (await sql`
-      select id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, created_at, updated_at
-      from records
-      where id = ${params.id}
-        and deleted_at is null
-    `) as RecordRow[];
-
-    if (!existing) {
-      return jsonError(new Error("Record was not found."), 404);
+    let record: RecordRow | null;
+    try {
+      record = await confirmStoredRecord(sql, params.id, resultType);
+    } catch (error) {
+      if (!(await ensureTrackerSchemaIfNeeded(error, sql))) {
+        throw error;
+      }
+      record = await confirmStoredRecord(sql, params.id, resultType);
     }
 
-    const amount = Number(existing.amount);
-    const rate = Number(existing.rate);
-    const { returnAmount, profit } = calculateRecordValues(amount, rate, resultType);
-    const [record] = (await sql`
-      update records
-      set status = 'finalized',
-          result_type = ${resultType},
-          return_amount = ${returnAmount},
-          profit = ${profit},
-          updated_at = now()
-      where id = ${params.id}
-      returning id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, created_at, updated_at
-    `) as RecordRow[];
+    if (!record) {
+      return jsonError(new Error("Record was not found."), 404);
+    }
 
     return NextResponse.json({ record: mapRecord(record) });
   } catch (error) {

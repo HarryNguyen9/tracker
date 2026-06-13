@@ -88,6 +88,22 @@ function upsertRecord(items: RecordWithBalance[], record: RecordItem) {
   return applyClientBalance(nextItems);
 }
 
+function applyConfirmedRecordSummary(player: PlayerSummary, record: RecordItem) {
+  const totalProfit = player.totalProfit + record.profit;
+  return {
+    ...player,
+    totalAmount: player.totalAmount + record.amount,
+    totalReturn: player.totalReturn + record.returnAmount,
+    totalProfit,
+    balance: totalProfit,
+    finalizedRecordCount: player.finalizedRecordCount + 1,
+    pendingRecordCount: Math.max(0, player.pendingRecordCount - 1),
+    winCount: player.winCount + (record.resultType === "win" ? 1 : 0),
+    lossCount: player.lossCount + (record.resultType === "loss" ? 1 : 0),
+    drawCount: player.drawCount + (record.resultType === "draw" ? 1 : 0),
+  };
+}
+
 class ApiError extends Error {
   status: number;
 
@@ -433,15 +449,22 @@ export default function AppShell() {
       return;
     }
     await runEdit(async () => {
-      await readJson(
+      const previousRecord = records.find((record) => record.id === recordId);
+      const data = await readJson<{ record: RecordItem }>(
         await fetch(`/api/records/${recordId}/confirm`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ resultType }),
         }),
       );
+      setRecords((current) => upsertRecord(current, data.record));
+      if (previousRecord?.status === "pending") {
+        setPlayers((current) =>
+          current.map((player) => (player.id === selectedId ? applyConfirmedRecordSummary(player, data.record) : player)),
+        );
+      }
       setConfirmingRecordId(null);
-      await Promise.all([loadRecords(selectedId, { silent: true }), loadPlayers(selectedId, { silent: true })]);
+      refreshSelectedData(selectedId);
     });
   }
 
