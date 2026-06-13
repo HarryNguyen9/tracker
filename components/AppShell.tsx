@@ -11,7 +11,7 @@ type PendingDelete = { type: "player"; player: PlayerSummary } | { type: "record
 
 const emptyRecordDraft: RecordDraft = { amount: "", rate: "", note: "" };
 const resultLabels: Record<ResultType, string> = { win: "Win", loss: "Loss", draw: "Draw", win_half: "Win Half", loss_half: "Loss Half" };
-const resultOptions: ResultType[] = ["win", "loss", "draw", "win_half", "loss_half"];
+const resultOptions: ResultType[] = ["win", "win_half", "draw", "loss_half", "loss"];
 const quickAmountIncrements = [1, 2, 5, 10, 20];
 
 function getExpectedReturn(amount: number, rate: number) {
@@ -177,6 +177,7 @@ export default function AppShell() {
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [scheduleMatches, setScheduleMatches] = useState<WorldCupMatch[]>([]);
   const [scheduleState, setScheduleState] = useState<LoadState>("idle");
+  const [isBackgroundSyncing, setIsBackgroundSyncing] = useState(false);
   const [scheduleError, setScheduleError] = useState("");
   const [scheduleSyncedAt, setScheduleSyncedAt] = useState<string | null>(null);
   const [trashRecords, setTrashRecords] = useState<RecordWithBalance[]>([]);
@@ -278,8 +279,12 @@ export default function AppShell() {
     }
   }
 
-  async function syncWorldCupMatches() {
-    setScheduleState("loading");
+  async function syncWorldCupMatches(isBackground = false) {
+    if (!isBackground) {
+      setScheduleState("loading");
+    } else {
+      setIsBackgroundSyncing(true);
+    }
     setScheduleError("");
     try {
       const data = await readJson<{ matches: WorldCupMatch[]; syncedAt: string }>(
@@ -291,21 +296,29 @@ export default function AppShell() {
     } catch (err) {
       console.error("Unable to sync World Cup schedule", err);
       const message = err instanceof ApiError ? err.message : "Unable to sync World Cup schedule. Please try again.";
-      try {
-        const cached = await readJson<{ matches: WorldCupMatch[] }>(await fetch("/api/world-cup/matches"));
-        setScheduleMatches(cached.matches);
-        setScheduleSyncedAt(cached.matches[0]?.lastSyncedAt ?? null);
-      } catch {
-        setScheduleMatches([]);
+      if (!isBackground) {
+        try {
+          const cached = await readJson<{ matches: WorldCupMatch[] }>(await fetch("/api/world-cup/matches"));
+          setScheduleMatches(cached.matches);
+          setScheduleSyncedAt(cached.matches[0]?.lastSyncedAt ?? null);
+        } catch {
+          setScheduleMatches([]);
+        }
       }
       setScheduleError(message);
       setScheduleState("error");
+    } finally {
+      if (isBackground) {
+        setIsBackgroundSyncing(false);
+      }
     }
   }
 
   function openSchedule() {
     setScheduleOpen(true);
-    void syncWorldCupMatches();
+    void loadWorldCupMatches().then(() => {
+      void syncWorldCupMatches(true);
+    });
   }
 
   function refreshSelectedData(playerId: string | null) {
@@ -1127,10 +1140,10 @@ export default function AppShell() {
         <ScheduleDialog
           error={scheduleError}
           lastSyncedAt={scheduleSyncedAt}
-          loading={scheduleState === "loading"}
+          loading={scheduleState === "loading" || isBackgroundSyncing}
           matches={scheduleMatches}
           onCancel={() => setScheduleOpen(false)}
-          onSync={syncWorldCupMatches}
+          onSync={() => { void syncWorldCupMatches(false); }}
         />
       ) : null}
 
