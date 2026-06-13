@@ -1,5 +1,6 @@
 export type ResultType = "win" | "loss" | "draw";
 export type RecordStatus = "pending" | "finalized";
+export type WorldCupMatchStatus = "scheduled" | "live" | "finished" | "postponed" | "cancelled";
 
 export type Player = {
   id: string;
@@ -40,4 +41,24 @@ export type PlayerSummary = Player & {
 
 export type RecordWithBalance = RecordItem & {
   balance: number | null;
+};
+
+export type WorldCupMatch = {
+  id: string;
+  provider: string;
+  providerMatchId: string;
+  matchNumber: number | null;
+  stage: string | null;
+  groupName: string | null;
+  homeTeam: string | null;
+  awayTeam: string | null;
+  homeScore: number | null;
+  awayScore: number | null;
+  kickoffAt: string | null;
+  venue: string | null;
+  city: string | null;
+  status: WorldCupMatchStatus;
+  winner: string | null;
+  lastSyncedAt: string;
+  updatedAt: string;
 };

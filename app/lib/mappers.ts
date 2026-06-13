@@ -1,5 +1,5 @@
-import type { Player, RecordItem, RecordWithBalance } from "./types";
-import type { PlayerRow, RecordRow } from "./db";
+import type { Player, RecordItem, RecordWithBalance, WorldCupMatch } from "./types";
+import type { PlayerRow, RecordRow, WorldCupMatchRow } from "./db";
 
 export function toNumber(value: string | number) {
   return typeof value === "number" ? value : Number(value);
@@ -7,6 +7,14 @@ export function toNumber(value: string | number) {
 
 function toIsoText(value: string | Date) {
   return value instanceof Date ? value.toISOString() : value;
+}
+
+function toNullableNumber(value: string | number | null) {
+  return value === null ? null : toNumber(value);
+}
+
+function toNullableIsoText(value: string | Date | null) {
+  return value === null ? null : toIsoText(value);
 }
 
 export function mapPlayer(row: PlayerRow): Player {
@@ -45,4 +53,26 @@ export function withBalance(items: RecordItem[]): RecordWithBalance[] {
     running += item.profit;
     return { ...item, balance: running };
   });
+}
+
+export function mapWorldCupMatch(row: WorldCupMatchRow): WorldCupMatch {
+  return {
+    id: row.id,
+    provider: row.provider,
+    providerMatchId: row.provider_match_id,
+    matchNumber: toNullableNumber(row.match_number),
+    stage: row.stage,
+    groupName: row.group_name,
+    homeTeam: row.home_team,
+    awayTeam: row.away_team,
+    homeScore: toNullableNumber(row.home_score),
+    awayScore: toNullableNumber(row.away_score),
+    kickoffAt: toNullableIsoText(row.kickoff_at),
+    venue: row.venue,
+    city: row.city,
+    status: row.status,
+    winner: row.winner,
+    lastSyncedAt: toIsoText(row.last_synced_at),
+    updatedAt: toIsoText(row.updated_at),
+  };
 }

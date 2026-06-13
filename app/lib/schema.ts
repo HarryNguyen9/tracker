@@ -66,6 +66,29 @@ async function applyTrackerSchema(sql: Sql) {
     )
   `;
 
+  await sql`
+    create table if not exists world_cup_matches (
+      id uuid primary key default gen_random_uuid(),
+      provider text not null default 'football-data',
+      provider_match_id text not null,
+      match_number integer,
+      stage text,
+      group_name text,
+      home_team text,
+      away_team text,
+      home_score integer,
+      away_score integer,
+      kickoff_at timestamptz,
+      venue text,
+      city text,
+      status text not null default 'scheduled',
+      winner text,
+      raw_data jsonb,
+      last_synced_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    )
+  `;
+
   await sql`alter table records add column if not exists status text not null default 'pending'`;
   await sql`alter table records add column if not exists result_type text`;
   await sql`alter table records add column if not exists deleted_at timestamptz`;
@@ -93,4 +116,29 @@ async function applyTrackerSchema(sql: Sql) {
   `;
   await sql`create index if not exists records_player_id_created_at_idx on records (player_id, created_at)`;
   await sql`create index if not exists records_player_id_deleted_at_idx on records (player_id, deleted_at)`;
+  await sql`alter table world_cup_matches add column if not exists provider text not null default 'football-data'`;
+  await sql`alter table world_cup_matches add column if not exists provider_match_id text`;
+  await sql`alter table world_cup_matches add column if not exists match_number integer`;
+  await sql`alter table world_cup_matches add column if not exists stage text`;
+  await sql`alter table world_cup_matches add column if not exists group_name text`;
+  await sql`alter table world_cup_matches add column if not exists home_team text`;
+  await sql`alter table world_cup_matches add column if not exists away_team text`;
+  await sql`alter table world_cup_matches add column if not exists home_score integer`;
+  await sql`alter table world_cup_matches add column if not exists away_score integer`;
+  await sql`alter table world_cup_matches add column if not exists kickoff_at timestamptz`;
+  await sql`alter table world_cup_matches add column if not exists venue text`;
+  await sql`alter table world_cup_matches add column if not exists city text`;
+  await sql`alter table world_cup_matches add column if not exists status text not null default 'scheduled'`;
+  await sql`alter table world_cup_matches add column if not exists winner text`;
+  await sql`alter table world_cup_matches add column if not exists raw_data jsonb`;
+  await sql`alter table world_cup_matches add column if not exists last_synced_at timestamptz not null default now()`;
+  await sql`alter table world_cup_matches add column if not exists updated_at timestamptz not null default now()`;
+  await sql`alter table world_cup_matches drop constraint if exists world_cup_matches_status_check`;
+  await sql`
+    alter table world_cup_matches
+    add constraint world_cup_matches_status_check
+    check (status in ('scheduled', 'live', 'finished', 'postponed', 'cancelled'))
+  `;
+  await sql`create unique index if not exists world_cup_matches_provider_match_id_idx on world_cup_matches (provider, provider_match_id)`;
+  await sql`create index if not exists world_cup_matches_kickoff_at_idx on world_cup_matches (kickoff_at)`;
 }

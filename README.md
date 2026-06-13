@@ -16,6 +16,7 @@ A mobile-first Next.js app for tracking game results by player. It stores player
 - USD display formatting with decimal Rate input.
 - Viewer Mode for reading data and Edit Mode unlocked by PIN for changes.
 - Pending records that become finalized only after confirming Win, Loss, or Draw.
+- World Cup 2026 schedule modal with football-data.org sync for fixtures and results.
 - Loading, empty, and error states.
 - Edit protection with `ADMIN_PIN` and an httpOnly cookie.
 
@@ -34,9 +35,10 @@ Copy `.env.example` to `.env.local` and fill in the values:
 ```bash
 DATABASE_URL=postgresql://...
 ADMIN_PIN=choose-a-private-pin
+FOOTBALL_DATA_API_KEY=your-football-data-token
 ```
 
-`DATABASE_URL` is only used by server-side API routes. Do not expose it in browser code.
+`DATABASE_URL` and `FOOTBALL_DATA_API_KEY` are only used by server-side API routes. Do not expose them in browser code.
 
 ## Database setup with Neon
 
@@ -48,6 +50,7 @@ Tables created:
 
 - `players`
 - `records` with pending/finalized status and `result_type` values `win`, `loss`, or `draw` after confirmation
+- `world_cup_matches` for cached World Cup 2026 fixtures and results synced from football-data.org
 
 No default players are inserted.
 
@@ -67,6 +70,7 @@ Open `http://localhost:3000`.
 3. Add these environment variables in Vercel Project Settings:
    - `DATABASE_URL`
    - `ADMIN_PIN`
+   - `FOOTBALL_DATA_API_KEY`
 4. Deploy.
 
 ## API routes
@@ -80,3 +84,5 @@ Open `http://localhost:3000`.
 - `PATCH /api/records/[id]`
 - `DELETE /api/records/[id]`
 - `POST /api/auth/edit-pin`
+- `GET /api/world-cup/matches`
+- `POST /api/world-cup/sync`

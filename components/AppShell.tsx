@@ -2,7 +2,7 @@
 
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import { formatDate, formatMoney, formatNumber } from "../app/lib/format";
-import type { PlayerSummary, RecordItem, RecordWithBalance, ResultType } from "../app/lib/types";
+import type { PlayerSummary, RecordItem, RecordWithBalance, ResultType, WorldCupMatch } from "../app/lib/types";
 
 type LoadState = "idle" | "loading" | "ready" | "error";
 type RecordDraft = { amount: string; rate: string; note: string };
@@ -65,6 +65,28 @@ function recordExportRow(player: PlayerSummary, record: RecordWithBalance): CsvV
     record.balance ?? "",
     record.note ?? "",
   ];
+}
+
+function formatScheduleDate(value: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+function formatScheduleDay(value: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  }).format(new Date(value));
+}
+
+function cleanStage(value: string | null) {
+  return value ? value.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase()) : "World Cup";
 }
 
 function applyClientBalance(items: RecordWithBalance[]) {
@@ -151,6 +173,11 @@ export default function AppShell() {
   const [expandedRecordId, setExpandedRecordId] = useState<string | null>(null);
   const [trashOpen, setTrashOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [scheduleMatches, setScheduleMatches] = useState<WorldCupMatch[]>([]);
+  const [scheduleState, setScheduleState] = useState<LoadState>("idle");
+  const [scheduleError, setScheduleError] = useState("");
+  const [scheduleSyncedAt, setScheduleSyncedAt] = useState<string | null>(null);
   const [trashRecords, setTrashRecords] = useState<RecordWithBalance[]>([]);
   const [trashState, setTrashState] = useState<LoadState>("idle");
 
@@ -160,7 +187,7 @@ export default function AppShell() {
     const uniqueAmounts: number[] = [];
     [...records].reverse().forEach((record) => {
       if (!uniqueAmounts.includes(record.amount)) {
-        uniqueAmounts.push(record.amount);
+        uniqueAmounts[uniqueAmounts.length] = record.amount;
       }
     });
     return uniqueAmounts.slice(0, 4);
@@ -233,6 +260,51 @@ export default function AppShell() {
       setRecordError(err instanceof ApiError ? err.message : "Unable to load trash. Please try again.");
       setTrashState("error");
     }
+  }
+
+  async function loadWorldCupMatches() {
+    setScheduleState("loading");
+    setScheduleError("");
+    try {
+      const data = await readJson<{ matches: WorldCupMatch[] }>(await fetch("/api/world-cup/matches"));
+      setScheduleMatches(data.matches);
+      setScheduleSyncedAt(data.matches[0]?.lastSyncedAt ?? null);
+      setScheduleState("ready");
+    } catch (err) {
+      console.error("Unable to load World Cup schedule", err);
+      setScheduleError(err instanceof ApiError ? err.message : "Unable to load World Cup schedule. Please try again.");
+      setScheduleState("error");
+    }
+  }
+
+  async function syncWorldCupMatches() {
+    setScheduleState("loading");
+    setScheduleError("");
+    try {
+      const data = await readJson<{ matches: WorldCupMatch[]; syncedAt: string }>(
+        await fetch("/api/world-cup/sync", { method: "POST" }),
+      );
+      setScheduleMatches(data.matches);
+      setScheduleSyncedAt(data.syncedAt);
+      setScheduleState("ready");
+    } catch (err) {
+      console.error("Unable to sync World Cup schedule", err);
+      const message = err instanceof ApiError ? err.message : "Unable to sync World Cup schedule. Please try again.";
+      try {
+        const cached = await readJson<{ matches: WorldCupMatch[] }>(await fetch("/api/world-cup/matches"));
+        setScheduleMatches(cached.matches);
+        setScheduleSyncedAt(cached.matches[0]?.lastSyncedAt ?? null);
+      } catch {
+        setScheduleMatches([]);
+      }
+      setScheduleError(message);
+      setScheduleState("error");
+    }
+  }
+
+  function openSchedule() {
+    setScheduleOpen(true);
+    void syncWorldCupMatches();
   }
 
   function refreshSelectedData(playerId: string | null) {
@@ -551,7 +623,7 @@ export default function AppShell() {
       const rows: CsvValue[][] = [recordExportHeader()];
       for (const player of players) {
         const data = await readJson<{ records: RecordWithBalance[] }>(await fetch(`/api/records?playerId=${player.id}`));
-        rows.push(...data.records.map((record) => recordExportRow(player, record)));
+        rows.splice(rows.length, 0, ...data.records.map((record) => recordExportRow(player, record)));
       }
       downloadCsv("game-tracker-all-data.csv", rows);
       setExportOpen(false);
@@ -572,6 +644,13 @@ export default function AppShell() {
             <h1 className="mt-3 text-3xl font-bold sm:text-5xl">Game Result Tracker</h1>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              className="rounded-full bg-white/10 px-4 py-2 text-sm font-bold text-white transition hover:bg-white/15"
+              onClick={openSchedule}
+              type="button"
+            >
+              Schedule
+            </button>
             <button
               aria-pressed={darkMode}
               className="rounded-full bg-white/10 px-4 py-2 text-sm font-bold text-white transition hover:bg-white/15"
@@ -1016,6 +1095,17 @@ export default function AppShell() {
         />
       ) : null}
 
+      {scheduleOpen ? (
+        <ScheduleDialog
+          error={scheduleError}
+          lastSyncedAt={scheduleSyncedAt}
+          loading={scheduleState === "loading"}
+          matches={scheduleMatches}
+          onCancel={() => setScheduleOpen(false)}
+          onSync={syncWorldCupMatches}
+        />
+      ) : null}
+
       {trashOpen ? (
         <TrashDialog
           loading={trashState === "loading"}
@@ -1145,6 +1235,97 @@ function ExportDialog({
   );
 }
 
+function ScheduleDialog({
+  error,
+  lastSyncedAt,
+  loading,
+  matches,
+  onCancel,
+  onSync,
+}: {
+  error: string;
+  lastSyncedAt: string | null;
+  loading: boolean;
+  matches: WorldCupMatch[];
+  onCancel: () => void;
+  onSync: () => void;
+}) {
+  const groupedMatches = matches.reduce<Record<string, WorldCupMatch[]>>((groups, match) => {
+    const key = match.kickoffAt ? formatScheduleDay(match.kickoffAt) : "Date TBA";
+    groups[key] = [...(groups[key] ?? []), match];
+    return groups;
+  }, {});
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-ink/60 p-4 backdrop-blur-sm sm:items-center sm:justify-center">
+      <section className="max-h-[88vh] w-full overflow-hidden rounded-[1.5rem] border border-white/80 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-[#121d19] sm:max-w-4xl">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">World Cup 2026</p>
+            <h2 className="mt-2 text-2xl font-black">Schedule</h2>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+              {lastSyncedAt ? `Last synced ${formatScheduleDate(lastSyncedAt)}` : "Sync updates when this modal opens."}
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              className="rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white active:scale-95 disabled:opacity-60"
+              disabled={loading}
+              onClick={onSync}
+              type="button"
+            >
+              {loading ? "Syncing..." : "Sync"}
+            </button>
+            <button className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-bold text-ink dark:bg-slate-700 dark:text-slate-50" onClick={onCancel} type="button">
+              Close
+            </button>
+          </div>
+        </div>
+
+        {error ? <StateBox tone="error" text={error} /> : null}
+        {loading && matches.length === 0 ? <p className="mt-5 rounded-2xl bg-slate-100 p-4 text-sm font-semibold dark:bg-white/10">Loading schedule...</p> : null}
+        {!loading && matches.length === 0 ? <p className="mt-5 rounded-2xl bg-slate-100 p-4 text-sm font-semibold dark:bg-white/10">No World Cup matches loaded yet.</p> : null}
+
+        <div className="mt-5 flex max-h-[64vh] flex-col gap-5 overflow-y-auto pr-1">
+          {Object.entries(groupedMatches).map(([day, dayMatches]) => (
+            <section key={day}>
+              <h3 className="sticky top-0 z-10 rounded-2xl border border-slate-100 bg-white/95 px-3 py-2 text-sm font-black text-slate-700 backdrop-blur dark:border-white/10 dark:bg-[#121d19]/95 dark:text-slate-200">
+                {day}
+              </h3>
+              <div className="mt-3 grid gap-3">
+                {dayMatches.map((match) => (
+                  <article className="rounded-2xl border border-slate-100 bg-slate-50 p-4 dark:border-white/10 dark:bg-white/[0.04]" key={match.id}>
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                          {cleanStage(match.stage)}
+                          {match.groupName ? ` • ${match.groupName}` : ""}
+                        </p>
+                        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                          {match.kickoffAt ? formatScheduleDate(match.kickoffAt) : "Kickoff TBA"}
+                        </p>
+                      </div>
+                      <WorldCupStatusBadge status={match.status} />
+                    </div>
+                    <div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+                      <p className="min-w-0 break-words text-right text-base font-black">{match.homeTeam ?? "TBA"}</p>
+                      <div className="rounded-2xl bg-white px-4 py-2 text-center font-black shadow-sm dark:bg-[#121d19]">
+                        {match.homeScore === null || match.awayScore === null ? "vs" : `${match.homeScore} - ${match.awayScore}`}
+                      </div>
+                      <p className="min-w-0 break-words text-base font-black">{match.awayTeam ?? "TBA"}</p>
+                    </div>
+                    {match.winner ? <p className="mt-3 text-center text-sm font-bold text-emerald-700 dark:text-emerald-300">Winner: {match.winner}</p> : null}
+                  </article>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function TrashDialog({
   loading,
   onCancel,
@@ -1261,6 +1442,25 @@ function StatusBadge({ status }: { status: "pending" | "finalized" }) {
       {status === "pending" ? "Pending" : "Finalized"}
     </span>
   );
+}
+
+function WorldCupStatusBadge({ status }: { status: WorldCupMatch["status"] }) {
+  const styles = {
+    scheduled: "bg-sky-100 text-sky-800 dark:bg-sky-400/15 dark:text-sky-200",
+    live: "bg-rose-100 text-rose-800 dark:bg-rose-400/15 dark:text-rose-200",
+    finished: "bg-emerald-100 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200",
+    postponed: "bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-200",
+    cancelled: "bg-slate-200 text-slate-700 dark:bg-white/10 dark:text-slate-200",
+  };
+  const labels = {
+    scheduled: "Scheduled",
+    live: "Live",
+    finished: "Finished",
+    postponed: "Postponed",
+    cancelled: "Cancelled",
+  };
+
+  return <span className={`rounded-full px-3 py-1 text-sm font-bold ${styles[status]}`}>{labels[status]}</span>;
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
