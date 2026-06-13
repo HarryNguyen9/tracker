@@ -36,8 +36,8 @@ async function loadPlayerSummaries(sql: Sql): Promise<PlayerSummary[]> {
       count(r.id) filter (where r.deleted_at is null and r.status = 'finalized') as finalized_record_count,
       count(r.id) filter (where r.deleted_at is null and r.status = 'pending') as pending_record_count,
       count(r.id) filter (where r.deleted_at is not null) as trashed_record_count,
-      count(r.id) filter (where r.deleted_at is null and r.status = 'finalized' and r.result_type = 'win') as win_count,
-      count(r.id) filter (where r.deleted_at is null and r.status = 'finalized' and r.result_type = 'loss') as loss_count,
+      count(r.id) filter (where r.deleted_at is null and r.status = 'finalized' and r.result_type in ('win', 'win_half')) as win_count,
+      count(r.id) filter (where r.deleted_at is null and r.status = 'finalized' and r.result_type in ('loss', 'loss_half')) as loss_count,
       count(r.id) filter (where r.deleted_at is null and r.status = 'finalized' and r.result_type = 'draw') as draw_count
     from players p
     left join records r on r.player_id = p.id

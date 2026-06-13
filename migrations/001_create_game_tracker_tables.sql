@@ -83,7 +83,7 @@ alter table records
 
 alter table records
   add constraint records_result_type_check
-  check (result_type is null or result_type in ('win', 'loss', 'draw'));
+  check (result_type is null or result_type in ('win', 'loss', 'draw', 'win_half', 'loss_half'));
 
 create index if not exists records_player_id_created_at_idx on records (player_id, created_at);
 

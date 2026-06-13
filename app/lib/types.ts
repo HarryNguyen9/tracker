@@ -1,4 +1,4 @@
-export type ResultType = "win" | "loss" | "draw";
+export type ResultType = "win" | "loss" | "draw" | "win_half" | "loss_half";
 export type RecordStatus = "pending" | "finalized";
 export type WorldCupMatchStatus = "scheduled" | "live" | "finished" | "postponed" | "cancelled";
 

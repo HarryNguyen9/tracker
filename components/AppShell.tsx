@@ -10,8 +10,8 @@ type PendingUnlockAction = "player" | "record" | "confirm" | null;
 type PendingDelete = { type: "player"; player: PlayerSummary } | { type: "record"; record: RecordWithBalance } | null;
 
 const emptyRecordDraft: RecordDraft = { amount: "", rate: "", note: "" };
-const resultLabels: Record<ResultType, string> = { win: "Win", loss: "Loss", draw: "Draw" };
-const resultOptions: ResultType[] = ["win", "loss", "draw"];
+const resultLabels: Record<ResultType, string> = { win: "Win", loss: "Loss", draw: "Draw", win_half: "Win Half", loss_half: "Loss Half" };
+const resultOptions: ResultType[] = ["win", "loss", "draw", "win_half", "loss_half"];
 const quickAmountIncrements = [1, 2, 5, 10, 20];
 
 function getExpectedReturn(amount: number, rate: number) {
@@ -120,8 +120,8 @@ function applyConfirmedRecordSummary(player: PlayerSummary, record: RecordItem) 
     balance: totalProfit,
     finalizedRecordCount: player.finalizedRecordCount + 1,
     pendingRecordCount: Math.max(0, player.pendingRecordCount - 1),
-    winCount: player.winCount + (record.resultType === "win" ? 1 : 0),
-    lossCount: player.lossCount + (record.resultType === "loss" ? 1 : 0),
+    winCount: player.winCount + (record.resultType === "win" || record.resultType === "win_half" ? 1 : 0),
+    lossCount: player.lossCount + (record.resultType === "loss" || record.resultType === "loss_half" ? 1 : 0),
     drawCount: player.drawCount + (record.resultType === "draw" ? 1 : 0),
   };
 }
@@ -999,7 +999,7 @@ export default function AppShell() {
                     {record.status === "pending" ? (
                       <div className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
                         {confirmingRecordId === record.id ? (
-                          <div className="grid gap-2 sm:grid-cols-4">
+                          <div className="grid gap-2 sm:grid-cols-3">
                             {resultOptions.map((resultType) => (
                               <button
                                 className="rounded-2xl bg-emerald-600 py-3 font-bold text-white active:scale-95"
@@ -1011,7 +1011,7 @@ export default function AppShell() {
                                 Confirm {resultLabels[resultType]}
                               </button>
                             ))}
-                            <button className="rounded-2xl bg-slate-200 px-4 font-bold dark:bg-white/10" onClick={() => setConfirmingRecordId(null)} type="button">
+                            <button className="rounded-2xl bg-slate-200 px-4 py-3 font-bold dark:bg-white/10 sm:col-span-3" onClick={() => setConfirmingRecordId(null)} type="button">
                               Cancel
                             </button>
                           </div>
@@ -1235,6 +1235,51 @@ function ExportDialog({
   );
 }
 
+const COUNTRY_CODE_MAP: Record<string, string> = {
+  "Afghanistan": "af", "Albania": "al", "Algeria": "dz", "Argentina": "ar", "Australia": "au",
+  "Austria": "at", "Bahrain": "bh", "Belgium": "be", "Bolivia": "bo", "Bosnia and Herzegovina": "ba",
+  "Brazil": "br", "Cameroon": "cm", "Canada": "ca", "Chile": "cl", "China PR": "cn", "China": "cn",
+  "Colombia": "co", "Comoros": "km", "Congo DR": "cd", "Costa Rica": "cr", "Croatia": "hr",
+  "Czech Republic": "cz", "Czechia": "cz", "Denmark": "dk", "DR Congo": "cd", "Ecuador": "ec",
+  "Egypt": "eg", "England": "gb-eng", "Equatorial Guinea": "gq", "Finland": "fi", "France": "fr",
+  "Germany": "de", "Ghana": "gh", "Greece": "gr", "Honduras": "hn", "Hungary": "hu",
+  "Iceland": "is", "Indonesia": "id", "Iran": "ir", "Iraq": "iq", "Ireland": "ie",
+  "Israel": "il", "Italy": "it", "Ivory Coast": "ci", "Côte d'Ivoire": "ci",
+  "Jamaica": "jm", "Japan": "jp", "Jordan": "jo", "Kenya": "ke",
+  "Korea Republic": "kr", "South Korea": "kr", "Kuwait": "kw",
+  "Mali": "ml", "Mexico": "mx", "Morocco": "ma", "Mozambique": "mz",
+  "Netherlands": "nl", "New Zealand": "nz", "Nigeria": "ng", "North Macedonia": "mk",
+  "Norway": "no", "Oman": "om", "Panama": "pa", "Paraguay": "py", "Peru": "pe",
+  "Philippines": "ph", "Poland": "pl", "Portugal": "pt", "Qatar": "qa",
+  "Romania": "ro", "Russia": "ru", "Saudi Arabia": "sa", "Scotland": "gb-sct",
+  "Senegal": "sn", "Serbia": "rs", "Slovakia": "sk", "Slovenia": "si",
+  "South Africa": "za", "Spain": "es", "Sweden": "se", "Switzerland": "ch",
+  "Tanzania": "tz", "Thailand": "th", "Trinidad and Tobago": "tt",
+  "Tunisia": "tn", "Turkey": "tr", "Türkiye": "tr",
+  "USA": "us", "United States": "us", "Uruguay": "uy", "Uzbekistan": "uz",
+  "Venezuela": "ve", "Vietnam": "vn", "Wales": "gb-wls",
+  "Ukraine": "ua", "United Arab Emirates": "ae",
+};
+
+function getCountryCode(teamName: string | null): string | null {
+  if (!teamName) return null;
+  return COUNTRY_CODE_MAP[teamName] ?? null;
+}
+
+function TeamFlag({ team }: { team: string | null }) {
+  const code = getCountryCode(team);
+  if (!code) return null;
+  return (
+    <img
+      alt={`${team} flag`}
+      className="inline-block h-5 w-7 rounded-sm object-cover shadow-sm"
+      loading="lazy"
+      src={`https://flagcdn.com/w40/${code}.png`}
+      srcSet={`https://flagcdn.com/w80/${code}.png 2x`}
+    />
+  );
+}
+
 function ScheduleDialog({
   error,
   lastSyncedAt,
@@ -1250,6 +1295,14 @@ function ScheduleDialog({
   onCancel: () => void;
   onSync: () => void;
 }) {
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+
   const groupedMatches = matches.reduce<Record<string, WorldCupMatch[]>>((groups, match) => {
     const key = match.kickoffAt ? formatScheduleDay(match.kickoffAt) : "Date TBA";
     groups[key] = [...(groups[key] ?? []), match];
@@ -1308,11 +1361,17 @@ function ScheduleDialog({
                       <WorldCupStatusBadge status={match.status} />
                     </div>
                     <div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-3">
-                      <p className="min-w-0 break-words text-right text-base font-black">{match.homeTeam ?? "TBA"}</p>
+                      <div className="flex items-center justify-end gap-2">
+                        <p className="min-w-0 break-words text-right text-base font-black">{match.homeTeam ?? "TBA"}</p>
+                        <TeamFlag team={match.homeTeam} />
+                      </div>
                       <div className="rounded-2xl bg-white px-4 py-2 text-center font-black shadow-sm dark:bg-[#121d19]">
                         {match.homeScore === null || match.awayScore === null ? "vs" : `${match.homeScore} - ${match.awayScore}`}
                       </div>
-                      <p className="min-w-0 break-words text-base font-black">{match.awayTeam ?? "TBA"}</p>
+                      <div className="flex items-center gap-2">
+                        <TeamFlag team={match.awayTeam} />
+                        <p className="min-w-0 break-words text-base font-black">{match.awayTeam ?? "TBA"}</p>
+                      </div>
                     </div>
                     {match.winner ? <p className="mt-3 text-center text-sm font-bold text-emerald-700 dark:text-emerald-300">Winner: {match.winner}</p> : null}
                   </article>
