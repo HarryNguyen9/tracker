@@ -157,6 +157,7 @@ export default function AppShell() {
   const [pendingUnlockAction, setPendingUnlockAction] = useState<PendingUnlockAction>(null);
   const [pendingConfirmRecordId, setPendingConfirmRecordId] = useState<string | null>(null);
   const [confirmingRecordId, setConfirmingRecordId] = useState<string | null>(null);
+  const [selectedResultType, setSelectedResultType] = useState<ResultType>("win");
   const [playerName, setPlayerName] = useState("");
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -373,6 +374,7 @@ export default function AppShell() {
       }
       if (pendingUnlockAction === "confirm" && pendingConfirmRecordId) {
         setConfirmingRecordId(pendingConfirmRecordId);
+        setSelectedResultType("win");
       }
       setPendingUnlockAction(null);
       setPendingConfirmRecordId(null);
@@ -999,21 +1001,46 @@ export default function AppShell() {
                     {record.status === "pending" ? (
                       <div className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
                         {confirmingRecordId === record.id ? (
-                          <div className="grid gap-2 sm:grid-cols-3">
-                            {resultOptions.map((resultType) => (
+                          <div className="flex flex-col gap-4">
+                            <div>
+                              <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">Select Result</p>
+                              <div className="flex flex-wrap gap-1 rounded-2xl bg-slate-100 p-1 dark:bg-white/10">
+                                {resultOptions.map((resultType) => {
+                                  const isActive = selectedResultType === resultType;
+                                  return (
+                                    <button
+                                      className={`flex-1 rounded-xl py-2 px-1 text-center text-xs font-bold transition active:scale-95 whitespace-nowrap ${
+                                        isActive
+                                          ? "bg-white text-ink shadow-sm dark:bg-[#121d19] dark:text-slate-50"
+                                          : "text-slate-600 hover:text-ink dark:text-slate-400 dark:hover:text-slate-200"
+                                      }`}
+                                      key={resultType}
+                                      onClick={() => setSelectedResultType(resultType)}
+                                      type="button"
+                                    >
+                                      {resultLabels[resultType]}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                            <div className="flex gap-2">
                               <button
-                                className="rounded-2xl bg-emerald-600 py-3 font-bold text-white active:scale-95"
+                                className="flex-1 rounded-2xl bg-emerald-600 py-3 font-bold text-white active:scale-95"
                                 disabled={busy}
-                                key={resultType}
-                                onClick={() => confirmRecord(record.id, resultType)}
+                                onClick={() => confirmRecord(record.id, selectedResultType)}
                                 type="button"
                               >
-                                Confirm {resultLabels[resultType]}
+                                Confirm
                               </button>
-                            ))}
-                            <button className="rounded-2xl bg-slate-200 px-4 py-3 font-bold dark:bg-white/10 sm:col-span-3" onClick={() => setConfirmingRecordId(null)} type="button">
-                              Cancel
-                            </button>
+                              <button
+                                className="rounded-2xl bg-slate-200 px-4 py-3 font-bold dark:bg-white/10"
+                                onClick={() => setConfirmingRecordId(null)}
+                                type="button"
+                              >
+                                Cancel
+                              </button>
+                            </div>
                           </div>
                         ) : (
                           <button
@@ -1026,6 +1053,7 @@ export default function AppShell() {
                               }
                               setConfirmingRecordId(record.id);
                               setExpandedRecordId(record.id);
+                              setSelectedResultType("win");
                             }}
                             type="button"
                           >
@@ -1240,6 +1268,7 @@ const COUNTRY_CODE_MAP: Record<string, string> = {
   "Austria": "at", "Bahrain": "bh", "Belgium": "be", "Bolivia": "bo", "Bosnia and Herzegovina": "ba",
   "Brazil": "br", "Cameroon": "cm", "Canada": "ca", "Chile": "cl", "China PR": "cn", "China": "cn",
   "Colombia": "co", "Comoros": "km", "Congo DR": "cd", "Costa Rica": "cr", "Croatia": "hr",
+  "Haiti": "ht",
   "Czech Republic": "cz", "Czechia": "cz", "Denmark": "dk", "DR Congo": "cd", "Ecuador": "ec",
   "Egypt": "eg", "England": "gb-eng", "Equatorial Guinea": "gq", "Finland": "fi", "France": "fr",
   "Germany": "de", "Ghana": "gh", "Greece": "gr", "Honduras": "hn", "Hungary": "hu",
