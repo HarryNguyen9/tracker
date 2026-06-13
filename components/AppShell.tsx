@@ -1415,7 +1415,11 @@ function ScheduleDialog({
                         <p className="min-w-0 break-words text-base font-black">{match.awayTeam ?? "TBA"}</p>
                       </div>
                     </div>
-                    {match.winner ? <p className="mt-3 text-center text-sm font-bold text-emerald-700 dark:text-emerald-300">Winner: {match.winner}</p> : null}
+                    {match.winner === "Draw" ? (
+                      <p className="mt-3 text-center text-sm font-bold text-amber-600 dark:text-amber-400">Draw</p>
+                    ) : match.winner ? (
+                      <p className="mt-3 text-center text-sm font-bold text-emerald-700 dark:text-emerald-300">🏆 {match.winner}</p>
+                    ) : null}
                   </article>
                 ))}
               </div>
