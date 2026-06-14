@@ -1227,6 +1227,14 @@ function ConfirmDialog({
   reasonError?: string;
   title: string;
 }) {
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+
   return (
     <div className="fixed inset-0 z-50 flex items-end bg-ink/60 p-4 backdrop-blur-sm sm:items-center sm:justify-center">
       <section className="w-full rounded-[1.5rem] border border-white/80 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-[#121d19] sm:max-w-sm">
@@ -1273,6 +1281,14 @@ function ExportDialog({
   onExportCurrentSession: () => void;
   onExportRecords: () => void;
 }) {
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+
   return (
     <div className="fixed inset-0 z-50 flex items-end bg-ink/60 p-4 backdrop-blur-sm sm:items-center sm:justify-center">
       <section className="w-full rounded-[1.5rem] border border-white/80 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-[#121d19] sm:max-w-sm">
@@ -1461,6 +1477,14 @@ function TrashDialog({
   onCancel: () => void;
   records: RecordWithBalance[];
 }) {
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+
   return (
     <div className="fixed inset-0 z-50 flex items-end bg-ink/60 p-4 backdrop-blur-sm sm:items-center sm:justify-center">
       <section className="max-h-[86vh] w-full overflow-hidden rounded-[1.5rem] border border-white/80 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-[#121d19] sm:max-w-2xl">
@@ -1513,6 +1537,15 @@ function FinalizedRecordsDialog({
   records: RecordWithBalance[];
 }) {
   const totalProfit = records.reduce((sum, r) => sum + r.profit, 0);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end bg-ink/60 p-4 backdrop-blur-sm sm:items-center sm:justify-center">
@@ -1539,32 +1572,55 @@ function FinalizedRecordsDialog({
         {records.length === 0 ? <p className="mt-5 rounded-2xl bg-slate-100 p-4 text-sm font-semibold dark:bg-white/10">No finalized records.</p> : null}
 
         <div className="mt-5 flex max-h-[56vh] flex-col gap-3 overflow-y-auto pr-1">
-          {records.map((record) => (
-            <article className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-white/[0.03]" key={record.id}>
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm text-slate-500 dark:text-slate-400">{formatDate(record.createdAt)}</p>
-                  <p className="mt-1 text-sm font-bold text-emerald-700 dark:text-emerald-300">Result Confirmed</p>
-                </div>
-                <StatusBadge status={record.status} />
-              </div>
-              <div className="mt-4 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
-                <MiniMetric label="Amount" value={formatMoney(record.amount)} />
-                <MiniMetric label="Rate" value={formatNumber(record.rate)} />
-                <MiniMetric label="Result" value={record.resultType ? resultLabels[record.resultType] : "-"} />
-                <MiniMetric label="Return" value={formatMoney(record.returnAmount)} />
-                <MiniMetric label="Profit" value={formatMoney(record.profit)} />
-                <MiniMetric label="Balance" value={record.balance === null ? "-" : formatMoney(record.balance)} />
-                <MiniMetric label="Status" value="Finalized" />
-              </div>
-              {record.note ? (
-                <div className="mt-3 rounded-2xl bg-slate-50 p-3 text-sm dark:bg-white/[0.04]">
-                  <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Note</p>
-                  <p className="mt-1 text-slate-700 dark:text-slate-200">{record.note}</p>
-                </div>
-              ) : null}
-            </article>
-          ))}
+          {records.map((record) => {
+            const isExpanded = expandedId === record.id;
+            return (
+              <article className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-white/[0.03]" key={record.id}>
+                <button
+                  aria-expanded={isExpanded}
+                  className="w-full text-left"
+                  onClick={() => setExpandedId((current) => (current === record.id ? null : record.id))}
+                  type="button"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm text-slate-500 dark:text-slate-400">{formatDate(record.createdAt)}</p>
+                      <p className="mt-1 text-sm font-bold text-emerald-700 dark:text-emerald-300">Result Confirmed</p>
+                    </div>
+                    <StatusBadge status={record.status} />
+                  </div>
+                  <div className="mt-4 flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Profit</p>
+                      <p className={`mt-1 text-lg font-bold ${record.profit < 0 ? "text-rose-700 dark:text-rose-300" : "text-ink dark:text-slate-50"}`}>
+                        {formatMoney(record.profit)}
+                      </p>
+                    </div>
+                    <span className="text-sm font-bold text-slate-500 dark:text-slate-400">{isExpanded ? "Hide Details" : "View Details"}</span>
+                  </div>
+                </button>
+                {isExpanded ? (
+                  <>
+                    <div className="mt-4 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+                      <MiniMetric label="Amount" value={formatMoney(record.amount)} />
+                      <MiniMetric label="Rate" value={formatNumber(record.rate)} />
+                      <MiniMetric label="Result" value={record.resultType ? resultLabels[record.resultType] : "-"} />
+                      <MiniMetric label="Return" value={formatMoney(record.returnAmount)} />
+                      <MiniMetric label="Profit" value={formatMoney(record.profit)} />
+                      <MiniMetric label="Balance" value={record.balance === null ? "-" : formatMoney(record.balance)} />
+                      <MiniMetric label="Status" value="Finalized" />
+                    </div>
+                    {record.note ? (
+                      <div className="mt-3 rounded-2xl bg-slate-50 p-3 text-sm dark:bg-white/[0.04]">
+                        <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Note</p>
+                        <p className="mt-1 text-slate-700 dark:text-slate-200">{record.note}</p>
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
+              </article>
+            );
+          })}
         </div>
       </section>
     </div>
