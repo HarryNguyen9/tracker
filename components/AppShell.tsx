@@ -719,7 +719,7 @@ export default function AppShell() {
       </section>
 
       <section className="grid gap-5 lg:grid-cols-[0.95fr_1.35fr]">
-        <div className="rounded-[1.5rem] border border-emerald-100/40 bg-card p-4 shadow-card dark:border-white/10 dark:bg-[#121d19]/95">
+        <div className="rounded-[1.5rem] border border-white/80 bg-white/95 p-4 shadow-soft dark:border-white/10 dark:bg-[#121d19]/95">
           <div className="mb-4 flex items-center gap-3">
             <div>
               <h2 className="text-xl font-bold">Players</h2>
@@ -838,7 +838,7 @@ export default function AppShell() {
           </div>
         </div>
 
-        <div className="hidden rounded-[1.5rem] border border-emerald-100/40 bg-card p-4 shadow-card dark:border-white/10 dark:bg-[#121d19]/95 lg:block">
+        <div className="hidden rounded-[1.5rem] border border-white/80 bg-white/95 p-4 shadow-soft dark:border-white/10 dark:bg-[#121d19]/95 lg:block">
           {selectedPlayer ? (
             <>
               <div className="mb-4 flex items-start gap-3">
@@ -849,12 +849,12 @@ export default function AppShell() {
                 {recordState === "loading" ? <span className="ml-auto text-sm text-slate-500 dark:text-slate-400">Loading...</span> : null}
               </div>
 
-              <section className="mb-4 rounded-2xl border border-emerald-100/50 bg-gradient-to-br from-emerald-50/60 to-white p-3 dark:border-white/10 dark:bg-white/[0.04]">
+              <section className="mb-4 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <h3 className="font-bold">Player Summary</h3>
                   <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200">Live</span>
                 </div>
-                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                   <SummaryTile accent="emerald" icon="$" label="Current Balance" value={formatMoney(selectedPlayer.balance)} />
                   <SummaryTile accent="slate" icon="A" label="Total Amount" value={formatMoney(selectedPlayer.totalAmount)} />
                   <SummaryTile accent="sky" icon="R" label="Total Return" value={formatMoney(selectedPlayer.totalReturn)} />
@@ -996,7 +996,7 @@ export default function AppShell() {
                   const summaryValue = record.status === "pending" ? expectedReturn : record.profit;
 
                   return (
-                  <article className="rounded-2xl border border-emerald-100/50 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-white/[0.03]" key={record.id}>
+                  <article className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-white/[0.03]" key={record.id}>
                     <button
                       aria-expanded={isExpanded}
                       className="w-full text-left"
@@ -1231,7 +1231,7 @@ export default function AppShell() {
             </div>
 
             <div className="flex max-h-[75vh] flex-col overflow-y-auto p-4">
-              <section className="mb-4 rounded-2xl border border-emerald-100/50 bg-gradient-to-br from-emerald-50/60 to-white p-3 dark:border-white/10 dark:bg-white/[0.04]">
+              <section className="mb-4 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <h3 className="font-bold">Player Summary</h3>
                   <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200">Live</span>
@@ -1932,9 +1932,9 @@ function FinalizedRecordsDialog({
 
 function Metric({ label, value, positive }: { label: string; value: string; positive?: boolean }) {
   return (
-    <div className="rounded-2xl border border-emerald-100/50 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-[#121d19]/95">
-      <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700/60 dark:text-slate-400">{label}</p>
-      <p className={`mt-1.5 text-xl font-bold ${positive === false ? "text-rose-700 dark:text-rose-300" : "text-ink dark:text-slate-50"}`}>{value}</p>
+    <div className="rounded-2xl border border-white/80 bg-white/95 p-4 shadow-soft dark:border-white/10 dark:bg-[#121d19]/95">
+      <p className="text-sm text-slate-500 dark:text-slate-400">{label}</p>
+      <p className={`mt-2 text-xl font-bold ${positive === false ? "text-rose-700 dark:text-rose-300" : "text-ink dark:text-slate-50"}`}>{value}</p>
     </div>
   );
 }
