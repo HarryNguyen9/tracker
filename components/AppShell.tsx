@@ -176,6 +176,7 @@ export default function AppShell() {
   const [finalizedOpen, setFinalizedOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
   const [scheduleMatches, setScheduleMatches] = useState<WorldCupMatch[]>([]);
   const [scheduleState, setScheduleState] = useState<LoadState>("idle");
   const [isBackgroundSyncing, setIsBackgroundSyncing] = useState(false);
@@ -353,6 +354,16 @@ export default function AppShell() {
     setFinalizedOpen(false);
     loadRecords(selectedId);
   }, [selectedId]);
+
+  useEffect(() => {
+    if (mobileDetailOpen) {
+      const previousOverflow = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+      return () => {
+        document.body.style.overflow = previousOverflow;
+      };
+    }
+  }, [mobileDetailOpen]);
 
   function openPinFor(action: PendingUnlockAction = null) {
     setPendingUnlockAction(action);
@@ -767,7 +778,7 @@ export default function AppShell() {
                 }`}
                 key={player.id}
               >
-                <button className="w-full text-left" onClick={() => setSelectedId(player.id)} type="button">
+                <button className="w-full text-left" onClick={() => { setSelectedId(player.id); setMobileDetailOpen(true); }} type="button">
                   <div className="flex items-start gap-3">
                     <div>
                       {renamingId === player.id ? (
@@ -1202,6 +1213,215 @@ export default function AppShell() {
           title={pendingDelete.type === "player" ? "Delete Player?" : "Move Record to Trash?"}
         />
       ) : null}
+
+      {selectedPlayer && mobileDetailOpen ? (
+        <div className="fixed inset-0 z-40 flex items-end bg-ink/60 backdrop-blur-sm sm:hidden" onClick={() => setMobileDetailOpen(false)}>
+          <section
+            className="w-full max-h-[85vh] overflow-hidden rounded-t-[1.5rem] border border-white/80 bg-white shadow-soft dark:border-white/10 dark:bg-[#121d19]"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-white/80 bg-white/95 p-4 dark:border-white/10 dark:bg-[#121d19]/95">
+              <div>
+                <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">Player detail</p>
+                <h2 className="text-xl font-bold">{selectedPlayer.name}</h2>
+              </div>
+              <button className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-bold text-ink dark:bg-slate-700 dark:text-slate-50" onClick={() => setMobileDetailOpen(false)} type="button">
+                Close
+              </button>
+            </div>
+
+            <div className="flex max-h-[75vh] flex-col overflow-y-auto p-4">
+              <section className="mb-4 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <h3 className="font-bold">Player Summary</h3>
+                  <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200">Live</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <SummaryTile accent="emerald" icon="$" label="Current Balance" value={formatMoney(selectedPlayer.balance)} />
+                  <SummaryTile accent="slate" icon="A" label="Total Amount" value={formatMoney(selectedPlayer.totalAmount)} />
+                  <SummaryTile accent="sky" icon="R" label="Total Return" value={formatMoney(selectedPlayer.totalReturn)} />
+                  <SummaryTile accent={selectedPlayer.totalProfit < 0 ? "rose" : "emerald"} icon="P" label="Total Profit" value={formatMoney(selectedPlayer.totalProfit)} />
+                  <SummaryTile accent="emerald" icon="W" label="Win Count" value={formatNumber(selectedPlayer.winCount)} />
+                  <SummaryTile accent="rose" icon="L" label="Loss Count" value={formatNumber(selectedPlayer.lossCount)} />
+                  <SummaryTile accent="amber" icon="D" label="Draw Count" value={formatNumber(selectedPlayer.drawCount)} />
+                  <SummaryTile accent="amber" icon="P" label="Pending Count" value={formatNumber(selectedPlayer.pendingRecordCount)} />
+                </div>
+              </section>
+
+              <button
+                className="mb-4 w-full rounded-2xl bg-emerald-600 py-3 font-bold text-white active:scale-95"
+                onClick={() => requestEdit(() => setRecordFormOpen(true), "record")}
+                type="button"
+              >
+                Add Record
+              </button>
+
+              <div className="mb-4 grid grid-cols-3 gap-2">
+                <button
+                  className="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold text-ink active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-50"
+                  onClick={toggleTrash}
+                  type="button"
+                >
+                  Trash ({selectedPlayer.trashedRecordCount})
+                </button>
+                <button
+                  className="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold text-ink active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-50"
+                  onClick={() => setFinalizedOpen(true)}
+                  type="button"
+                >
+                  Finalized ({finalizedRecords.length})
+                </button>
+                <button
+                  className="rounded-2xl bg-slate-100 px-3 py-3 text-sm font-bold active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white/10"
+                  disabled={players.length === 0 || busy}
+                  onClick={() => setExportOpen(true)}
+                  type="button"
+                >
+                  Export
+                </button>
+              </div>
+
+              {recordError ? <StateBox tone="error" text={recordError} /> : null}
+              {recordState !== "loading" && records.length === 0 ? <StateBox tone="empty" text="No records yet. Add the first record for this player." /> : null}
+
+              <p className="mt-3 text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                Pending Records ({pendingRecords.length})
+              </p>
+              <div className="mt-2 flex flex-col gap-3">
+                {pendingRecords.map((record) => {
+                  const expectedReturn = getExpectedReturn(record.amount, record.rate);
+                  const isExpanded = expandedRecordId === record.id || confirmingRecordId === record.id;
+                  const summaryLabel = record.status === "pending" ? "Expected Return" : "Profit";
+                  const summaryValue = record.status === "pending" ? expectedReturn : record.profit;
+
+                  return (
+                  <article className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-white/[0.03]" key={record.id}>
+                    <button
+                      aria-expanded={isExpanded}
+                      className="w-full text-left"
+                      onClick={() => setExpandedRecordId((current) => (current === record.id ? null : record.id))}
+                      type="button"
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm text-slate-500 dark:text-slate-400">{formatDate(record.createdAt)}</p>
+                          <p className="mt-1 text-sm font-bold text-emerald-700 dark:text-emerald-300">
+                            {record.status === "pending" ? "Result Pending" : "Result Confirmed"}
+                          </p>
+                        </div>
+                        <StatusBadge status={record.status} />
+                      </div>
+                      <div className="mt-4 flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
+                        <div>
+                          <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">{summaryLabel}</p>
+                          <p className={`mt-1 text-lg font-bold ${summaryValue < 0 ? "text-rose-700 dark:text-rose-300" : "text-ink dark:text-slate-50"}`}>
+                            {formatMoney(summaryValue)}
+                          </p>
+                        </div>
+                        <span className="text-sm font-bold text-slate-500 dark:text-slate-400">{isExpanded ? "Hide Details" : "View Details"}</span>
+                      </div>
+                    </button>
+                    {isExpanded ? (
+                      <>
+                    <div className="mt-4">
+                      {record.note ? <p className="font-medium">{record.note}</p> : <p className="text-sm text-slate-400 dark:text-slate-500">No note</p>}
+                    </div>
+                    <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
+                      <MiniMetric label="Amount" value={formatMoney(record.amount)} />
+                      <MiniMetric label="Rate" value={formatNumber(record.rate)} />
+                      <MiniMetric label="Status" value={record.status === "pending" ? "Pending" : "Finalized"} />
+                      <MiniMetric label="Result" value={record.resultType ? resultLabels[record.resultType] : "Pending"} />
+                      <MiniMetric label={record.status === "pending" ? "Expected Return" : "Return"} value={record.status === "pending" ? formatMoney(expectedReturn) : formatMoney(record.returnAmount)} />
+                      <MiniMetric label="Profit" value={record.status === "pending" ? "-" : formatMoney(record.profit)} />
+                      <MiniMetric label="Balance" value={record.balance === null ? "-" : formatMoney(record.balance)} />
+                    </div>
+                    {record.status === "pending" ? (
+                      <div className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
+                        {confirmingRecordId === record.id ? (
+                          <div className="flex flex-col gap-4">
+                            <div>
+                              <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">Select Result</p>
+                              <div className="flex flex-wrap gap-1 rounded-2xl bg-slate-100 p-1 dark:bg-white/10">
+                                {resultOptions.map((resultType) => {
+                                  const isActive = selectedResultType === resultType;
+                                  return (
+                                    <button
+                                      className={`flex-1 rounded-xl py-2 px-1 text-center text-xs font-bold transition active:scale-95 whitespace-nowrap ${
+                                        isActive
+                                          ? "bg-white text-ink shadow-sm dark:bg-[#121d19] dark:text-slate-50"
+                                          : "text-slate-600 hover:text-ink dark:text-slate-400 dark:hover:text-slate-200"
+                                      }`}
+                                      key={resultType}
+                                      onClick={() => setSelectedResultType(resultType)}
+                                      type="button"
+                                    >
+                                      {resultLabels[resultType]}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                className="flex-1 rounded-2xl bg-emerald-600 py-3 font-bold text-white active:scale-95"
+                                disabled={busy}
+                                onClick={() => confirmRecord(record.id, selectedResultType)}
+                                type="button"
+                              >
+                                Confirm
+                              </button>
+                              <button
+                                className="rounded-2xl bg-slate-200 px-4 py-3 font-bold dark:bg-white/10"
+                                onClick={() => setConfirmingRecordId(null)}
+                                type="button"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            className="w-full rounded-2xl bg-ink py-3 text-sm font-bold text-white"
+                            onClick={() => {
+                              if (!editMode) {
+                                setPendingConfirmRecordId(record.id);
+                                openPinFor("confirm");
+                                return;
+                              }
+                              setConfirmingRecordId(record.id);
+                              setExpandedRecordId(record.id);
+                              setSelectedResultType("win");
+                            }}
+                            type="button"
+                          >
+                            Confirm Result
+                          </button>
+                        )}
+                      </div>
+                    ) : null}
+                    {editMode ? (
+                      <div className="mt-4 flex gap-2">
+                        {record.status === "pending" ? (
+                          <button className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold dark:bg-white/10" onClick={() => startEditRecord(record)} type="button">
+                            Edit Record
+                          </button>
+                        ) : null}
+                        <button className="flex-1 rounded-2xl bg-rose-50 py-2 text-sm font-bold text-rose-700 dark:bg-rose-400/10 dark:text-rose-200" onClick={() => removeRecord(record)} type="button">
+                          Move to Trash
+                        </button>
+                      </div>
+                    ) : null}
+                      </>
+                    ) : null}
+                  </article>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
     </main>
   );
 }
@@ -1719,6 +1939,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
     </label>
   );
 }
+
 
 function StateBox({ text, tone }: { text: string; tone: "error" | "empty" }) {
   return (
