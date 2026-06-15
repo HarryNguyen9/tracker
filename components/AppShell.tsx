@@ -838,7 +838,7 @@ export default function AppShell() {
           </div>
         </div>
 
-        <div className="rounded-[1.5rem] border border-white/80 bg-white/95 p-4 shadow-soft dark:border-white/10 dark:bg-[#121d19]/95">
+        <div className="hidden rounded-[1.5rem] border border-white/80 bg-white/95 p-4 shadow-soft dark:border-white/10 dark:bg-[#121d19]/95 lg:block">
           {selectedPlayer ? (
             <>
               <div className="mb-4 flex items-start gap-3">
@@ -1280,6 +1280,89 @@ export default function AppShell() {
                   Export
                 </button>
               </div>
+
+              {recordFormOpen && editMode ? (
+                <form className="mb-4 rounded-2xl border border-slate-100 bg-slate-50 p-4 dark:border-white/10 dark:bg-white/[0.04]" onSubmit={(event) => event.preventDefault()}>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Field label="Amount">
+                      <input
+                        className="input"
+                        inputMode="decimal"
+                        min="0"
+                        onChange={(event) => setDraft((current) => ({ ...current, amount: event.target.value }))}
+                        placeholder="100000"
+                        step="any"
+                        type="number"
+                        value={draft.amount}
+                      />
+                    </Field>
+                    <div className="rounded-2xl border border-slate-100 bg-white p-3 dark:border-white/10 dark:bg-white/[0.04] sm:col-span-2">
+                      <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Quick Add Amount</p>
+                      <div className="mt-3 grid grid-cols-5 gap-2">
+                        {quickAmountIncrements.map((amount) => (
+                          <button
+                            className="rounded-xl bg-slate-100 py-2 text-sm font-bold text-ink active:scale-95 dark:bg-white/10 dark:text-slate-50"
+                            key={amount}
+                            onClick={() => addQuickAmount(amount)}
+                            type="button"
+                          >
+                            +{amount}
+                          </button>
+                        ))}
+                      </div>
+                      {recentAmounts.length > 0 ? (
+                        <>
+                          <p className="mt-4 text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Recently Used</p>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {recentAmounts.map((amount) => (
+                              <button
+                                className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-800 active:scale-95 dark:border-emerald-400/20 dark:bg-emerald-400/10 dark:text-emerald-200"
+                                key={amount}
+                                onClick={() => setRecentAmount(amount)}
+                                type="button"
+                              >
+                                {formatMoney(amount)}
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      ) : null}
+                    </div>
+                    <Field label="Rate">
+                      <input
+                        className="input"
+                        inputMode="decimal"
+                        min="0"
+                        onChange={(event) => setDraft((current) => ({ ...current, rate: event.target.value }))}
+                        placeholder="1.95"
+                        step="any"
+                        type="number"
+                        value={draft.rate}
+                      />
+                    </Field>
+                    <Field label="Note">
+                      <textarea
+                        className="input min-h-24 resize-none sm:col-span-2"
+                        onChange={(event) => setDraft((current) => ({ ...current, note: event.target.value }))}
+                        placeholder="Optional note"
+                        value={draft.note}
+                      />
+                    </Field>
+                  </div>
+                  <div className="mt-4 rounded-2xl border border-emerald-100 bg-white p-4 dark:border-emerald-400/20 dark:bg-white/[0.04]">
+                    <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Expected Return</p>
+                    <p className="mt-1 text-xl font-bold text-ink dark:text-slate-50">{formatMoney(draftExpectedReturn)}</p>
+                  </div>
+                  <div className="mt-4 flex gap-2">
+                    <button className="flex-1 rounded-2xl bg-emerald-600 py-3 font-bold text-white active:scale-95" disabled={busy} onClick={saveRecord} type="button">
+                      Save Record
+                    </button>
+                    <button className="rounded-2xl bg-slate-200 px-4 font-bold dark:bg-white/10" onClick={resetRecordForm} type="button">
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              ) : null}
 
               {recordError ? <StateBox tone="error" text={recordError} /> : null}
               {recordState !== "loading" && records.length === 0 ? <StateBox tone="empty" text="No records yet. Add the first record for this player." /> : null}
