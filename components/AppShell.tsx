@@ -357,6 +357,8 @@ export default function AppShell() {
 
   useEffect(() => {
     if (mobileDetailOpen) {
+      // Only lock body scroll on mobile (< 640px where sm:hidden applies)
+      if (window.matchMedia("(min-width: 640px)").matches) return;
       const previousOverflow = document.body.style.overflow;
       document.body.style.overflow = "hidden";
       return () => {
