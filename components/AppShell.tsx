@@ -673,7 +673,7 @@ export default function AppShell() {
             <p className="text-sm font-medium uppercase tracking-[0.3em] text-emerald-200">Game Tracker</p>
             <h1 className="mt-3 text-3xl font-bold sm:text-5xl">Game Result Tracker</h1>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
             <button
               className="rounded-full bg-white/10 px-4 py-2 text-sm font-bold text-white transition hover:bg-white/15"
               onClick={openSchedule}
