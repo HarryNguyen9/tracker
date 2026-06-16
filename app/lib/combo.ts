@@ -2,7 +2,14 @@ export type SelectionOutcome = "WIN" | "HALF_WIN" | "DRAW" | "HALF_LOSE" | "LOSE
 
 export type Selection = {
   originalRate: number;
+  amount: number;
   outcome: SelectionOutcome;
+};
+
+export type LegResult = {
+  currentRate: number;
+  returnAmount: number;
+  profit: number;
 };
 
 export type ComboBetResult = {
@@ -10,28 +17,33 @@ export type ComboBetResult = {
   totalReturn: number;
   netProfit: number;
   currentRates: number[];
+  totalStake: number;
+  legResults: LegResult[];
 };
 
 /**
- * Tính toán cược xiên (Combo/Parlay bet).
+ * Tính toán cược xiên (Combo/Parlay bet) với per-leg amounts.
+ * Mỗi leg có amount riêng, rate riêng.
  *
- * @param stake - Số tiền đặt cược.
- * @param selections - Danh sách các lựa chọn, mỗi lựa chọn có tỷ lệ gốc và kết quả.
- * @returns Kết quả bao gồm tỷ lệ cuối, tổng tiền trả về, lợi nhuận ròng và từng currentRate.
+ * @param selections - Danh sách các lựa chọn, mỗi lựa chọn có tỷ lệ, tiền cược và kết quả.
+ * @returns Kết quả bao gồm tỷ lệ cuối, tổng tiền trả về, lợi nhuận ròng, từng currentRate và legResults.
  */
 export function calculateComboBet(
-  stake: number,
   selections: Selection[]
 ): ComboBetResult {
-  if (stake <= 0) {
-    throw new Error("Stake must be greater than 0");
-  }
   if (selections.length === 0) {
     throw new Error("At least one selection is required");
   }
 
+  const totalStake = selections.reduce((sum, s) => sum + s.amount, 0);
+  if (totalStake <= 0) {
+    throw new Error("Total stake must be greater than 0");
+  }
+
   const currentRates: number[] = [];
+  const legResults: LegResult[] = [];
   let finalRate = 1;
+  let anyLose = false;
 
   for (const selection of selections) {
     let currentRate: number;
@@ -50,21 +62,37 @@ export function calculateComboBet(
         currentRate = 0.5;
         break;
       case "LOSE":
-        // Cả combo thua, dừng ngay
+        anyLose = true;
         currentRate = 0.0;
-        currentRates.push(currentRate);
-        finalRate = 0;
-        return { finalRate: 0, totalReturn: 0, netProfit: -stake, currentRates };
+        break;
       default:
         throw new Error(`Unknown outcome: ${selection.outcome}`);
     }
 
     currentRates.push(currentRate);
     finalRate *= currentRate;
+
+    const returnAmount = selection.amount * currentRate;
+    legResults.push({
+      currentRate,
+      returnAmount,
+      profit: returnAmount - selection.amount,
+    });
   }
 
-  const totalReturn = stake * finalRate;
-  const netProfit = totalReturn - stake;
+  if (anyLose) {
+    return {
+      finalRate: 0,
+      totalReturn: 0,
+      netProfit: -totalStake,
+      currentRates,
+      totalStake,
+      legResults,
+    };
+  }
 
-  return { finalRate, totalReturn, netProfit, currentRates };
+  const totalReturn = totalStake * finalRate;
+  const netProfit = totalReturn - totalStake;
+
+  return { finalRate, totalReturn, netProfit, currentRates, totalStake, legResults };
 }

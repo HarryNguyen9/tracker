@@ -8,11 +8,11 @@ import { cleanOptionalText, parseGreaterThanZeroNumber, parseNonNegativeNumber }
 
 type Sql = ReturnType<typeof getSql>;
 
-async function insertPendingRecord(sql: Sql, playerId: string, amount: number, rate: number, note: string | null) {
+async function insertPendingRecord(sql: Sql, playerId: string, amount: number, rate: number, note: string | null, comboLegs: unknown) {
   const [record] = (await sql`
-    insert into records (player_id, amount, rate, status, result_type, return_amount, profit, note)
-    values (${playerId}, ${amount}, ${rate}, 'pending', null, 0, 0, ${note})
-    returning id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, created_at, updated_at
+    insert into records (player_id, amount, rate, status, result_type, return_amount, profit, note, combo_legs)
+    values (${playerId}, ${amount}, ${rate}, 'pending', null, 0, 0, ${note}, ${comboLegs ? JSON.stringify(comboLegs) : null})
+    returning id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, combo_legs, created_at, updated_at
   `) as RecordRow[];
 
   return record;
@@ -21,14 +21,14 @@ async function insertPendingRecord(sql: Sql, playerId: string, amount: number, r
 async function loadRecordRows(sql: Sql, playerId: string, trash: boolean) {
   return trash
     ? ((await sql`
-        select id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, created_at, updated_at
+        select id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, combo_legs, created_at, updated_at
         from records
         where player_id = ${playerId}
           and deleted_at is not null
         order by deleted_at desc
       `) as RecordRow[])
     : ((await sql`
-        select id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, created_at, updated_at
+        select id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, combo_legs, created_at, updated_at
         from records
         where player_id = ${playerId}
           and deleted_at is null
@@ -80,15 +80,16 @@ export async function POST(request: Request) {
     const amount = parseGreaterThanZeroNumber(body.amount, "Amount");
     const rate = parseNonNegativeNumber(body.rate, "Rate");
     const note = cleanOptionalText(body.note);
+    const comboLegs = Array.isArray(body.comboLegs) ? body.comboLegs : null;
     const sql = getSql();
     let record: RecordRow;
     try {
-      record = await insertPendingRecord(sql, playerId, amount, rate, note);
+      record = await insertPendingRecord(sql, playerId, amount, rate, note, comboLegs);
     } catch (error) {
       if (!(await ensureTrackerSchemaIfNeeded(error, sql))) {
         throw error;
       }
-      record = await insertPendingRecord(sql, playerId, amount, rate, note);
+      record = await insertPendingRecord(sql, playerId, amount, rate, note, comboLegs);
     }
 
     return NextResponse.json({ record: mapRecord(record) }, { status: 201 });

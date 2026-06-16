@@ -5,13 +5,14 @@ import { jsonError } from "../../../../lib/http";
 import { mapRecord } from "../../../../lib/mappers";
 import { ensureTrackerSchemaIfNeeded } from "../../../../lib/schema";
 import { calculateRecordValues, parseResultType } from "../../../../lib/validation";
+import { calculateComboBet, type Selection } from "../../../../lib/combo";
 
 type Params = { params: { id: string } };
 type Sql = ReturnType<typeof getSql>;
 
 async function confirmStoredRecord(sql: Sql, id: string, resultType: ReturnType<typeof parseResultType>) {
   const [existing] = (await sql`
-    select id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, created_at, updated_at
+    select id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, combo_legs, created_at, updated_at
     from records
     where id = ${id}
       and deleted_at is null
@@ -21,18 +22,42 @@ async function confirmStoredRecord(sql: Sql, id: string, resultType: ReturnType<
     return null;
   }
 
+  const comboLegs = existing.combo_legs ? (typeof existing.combo_legs === "string" ? JSON.parse(existing.combo_legs) : existing.combo_legs) : null;
   const amount = Number(existing.amount);
   const rate = Number(existing.rate);
-  const { returnAmount, profit } = calculateRecordValues(amount, rate, resultType);
+
+  let finalReturnAmount: number;
+  let finalProfit: number;
+  let finalResultType: string;
+
+  if (comboLegs && Array.isArray(comboLegs) && comboLegs.length > 0) {
+    // Combo: apply resultType to all legs and calculate
+    const selections: Selection[] = comboLegs.map((leg: { rate: number; amount: number }) => ({
+      originalRate: leg.rate,
+      amount: leg.amount,
+      outcome: resultType as Selection["outcome"],
+    }));
+    const comboResult = calculateComboBet(selections);
+    finalReturnAmount = comboResult.totalReturn;
+    finalProfit = comboResult.netProfit;
+    finalResultType = comboResult.netProfit > 0 ? "win" : comboResult.netProfit < 0 ? "loss" : "draw";
+  } else {
+    // Single bet
+    const { returnAmount, profit } = calculateRecordValues(amount, rate, resultType);
+    finalReturnAmount = returnAmount;
+    finalProfit = profit;
+    finalResultType = resultType;
+  }
+
   const [record] = (await sql`
     update records
     set status = 'finalized',
-        result_type = ${resultType},
-        return_amount = ${returnAmount},
-        profit = ${profit},
+        result_type = ${finalResultType},
+        return_amount = ${finalReturnAmount},
+        profit = ${finalProfit},
         updated_at = now()
     where id = ${id}
-    returning id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, created_at, updated_at
+    returning id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, combo_legs, created_at, updated_at
   `) as RecordRow[];
 
   return record;

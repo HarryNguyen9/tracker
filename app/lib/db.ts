@@ -20,6 +20,7 @@ export type RecordRow = {
   note: string | null;
   deleted_at: string | Date | null;
   delete_reason: string | null;
+  combo_legs: unknown;
   created_at: string | Date;
   updated_at: string | Date;
 };

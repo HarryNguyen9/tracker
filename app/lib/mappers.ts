@@ -39,6 +39,7 @@ export function mapRecord(row: RecordRow): RecordItem {
     note: row.note,
     deletedAt: row.deleted_at ? toIsoText(row.deleted_at) : null,
     deleteReason: row.delete_reason,
+    comboLegs: row.combo_legs ? (typeof row.combo_legs === "string" ? JSON.parse(row.combo_legs) : row.combo_legs) : null,
     createdAt: toIsoText(row.created_at),
     updatedAt: toIsoText(row.updated_at),
   };

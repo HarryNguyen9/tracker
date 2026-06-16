@@ -21,6 +21,7 @@ export type RecordItem = {
   note: string | null;
   deletedAt: string | null;
   deleteReason: string | null;
+  comboLegs: ComboLeg[] | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -47,7 +48,16 @@ export type ComboSelectionOutcome = "WIN" | "HALF_WIN" | "DRAW" | "HALF_LOSE" | 
 
 export type ComboSelection = {
   originalRate: number;
+  amount: number;
   outcome: ComboSelectionOutcome;
+};
+
+export type ComboLeg = {
+  rate: number;
+  amount: number;
+  outcome: ComboSelectionOutcome | null;
+  currentRate: number | null;
+  returnAmount: number | null;
 };
 
 export type RecordDraft = {
