@@ -43,6 +43,21 @@ export type RecordWithBalance = RecordItem & {
   balance: number | null;
 };
 
+export type ComboSelectionOutcome = "WIN" | "HALF_WIN" | "DRAW" | "HALF_LOSE" | "LOSE";
+
+export type ComboSelection = {
+  originalRate: number;
+  outcome: ComboSelectionOutcome;
+};
+
+export type RecordDraft = {
+  amount: string;
+  rate: string;
+  note: string;
+  comboMode: boolean;
+  comboSelections: ComboSelection[];
+};
+
 export type WorldCupMatch = {
   id: string;
   provider: string;
