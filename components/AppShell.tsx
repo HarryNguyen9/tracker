@@ -2,7 +2,7 @@
 
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import { formatDate, formatMoney, formatNumber } from "../app/lib/format";
-import type { ComboSelection, PlayerSummary, RecordItem, RecordWithBalance, ResultType, WorldCupMatch } from "../app/lib/types";
+import type { ComboSelection, ComboSelectionOutcome, PlayerSummary, RecordItem, RecordWithBalance, ResultType, WorldCupMatch } from "../app/lib/types";
 import { calculateComboBet } from "../app/lib/combo";
 
 type LoadState = "idle" | "loading" | "ready" | "error";
@@ -11,7 +11,7 @@ type PendingUnlockAction = "player" | "record" | "confirm" | null;
 type PendingDelete = { type: "player"; player: PlayerSummary } | { type: "record"; record: RecordWithBalance } | null;
 
 const comboOutcomeLabels: Record<string, string> = { WIN: "Win", HALF_WIN: "½ Win", DRAW: "Draw", HALF_LOSE: "½ Lose", LOSE: "Lose" };
-const comboOutcomeOptions: ComboSelection["outcome"][] = ["WIN", "HALF_WIN", "DRAW", "HALF_LOSE", "LOSE"];
+const comboOutcomeOptions: ComboSelectionOutcome[] = ["WIN", "HALF_WIN", "DRAW", "HALF_LOSE", "LOSE"];
 const emptyRecordDraft: RecordDraft = { amount: "", rate: "", note: "", comboMode: false, comboSelections: [] };
 const resultLabels: Record<ResultType, string> = { win: "Win", loss: "Loss", draw: "Draw", win_half: "Win Half", loss_half: "Loss Half" };
 const resultOptions: ResultType[] = ["win", "win_half", "draw", "loss_half", "loss"];
@@ -195,13 +195,14 @@ export default function AppShell() {
     if (!draft.comboMode || draft.comboSelections.length === 0) return null;
     const amount = parseDraftNumber(draft.amount);
     if (amount <= 0) return null;
+    const rates = draft.comboSelections.map((s) => s.originalRate);
     try {
-      return calculateComboBet(draft.comboSelections);
+      return calculateComboBet(amount, rates);
     } catch {
       return null;
     }
   }, [draft.amount, draft.comboMode, draft.comboSelections]);
-  const draftExpectedReturn = draft.comboMode && draftComboResult ? draftComboResult.totalReturn : getExpectedReturn(parseDraftNumber(draft.amount), parseDraftNumber(draft.rate));
+  const draftExpectedReturn = draft.comboMode && draftComboResult ? draftComboResult.returnAmount : getExpectedReturn(parseDraftNumber(draft.amount), parseDraftNumber(draft.rate));
   const recentAmounts = useMemo(() => {
     const uniqueAmounts: number[] = [];
     [...records].reverse().forEach((record) => {
@@ -545,7 +546,9 @@ export default function AppShell() {
           return;
         }
         try {
-          const result = calculateComboBet(draft.comboSelections);
+          const amount = parseDraftNumber(draft.amount);
+          const rates = draft.comboSelections.map((s) => s.originalRate);
+          const result = calculateComboBet(amount, rates);
           payload.rate = String(result.finalRate);
           payload.comboLegs = draft.comboSelections;
         } catch {
@@ -1008,37 +1011,6 @@ export default function AppShell() {
                               type="number"
                               value={sel.originalRate || ""}
                             />
-                            <input
-                              className="input"
-                              inputMode="decimal"
-                              min="0"
-                              onChange={(event) => {
-                                const val = parseDraftNumber(event.target.value);
-                                const updated = [...draft.comboSelections];
-                                updated[idx] = { ...updated[idx], amount: val > 0 ? val : 0 };
-                                setDraft((current) => ({ ...current, comboSelections: updated }));
-                              }}
-                              placeholder="Amount"
-                              step="any"
-                              type="number"
-                              value={sel.amount || ""}
-                            />
-                            <div className="flex gap-1 rounded-2xl bg-slate-100 p-1 dark:bg-white/10">
-                              {comboOutcomeOptions.map((outcome) => (
-                                <button
-                                  className={`rounded-xl px-2 py-1 text-xs font-bold transition active:scale-95 ${sel.outcome === outcome ? "bg-white text-ink shadow-sm dark:bg-[#121d19] dark:text-slate-50" : "text-slate-600 hover:text-ink dark:text-slate-400 dark:hover:text-slate-200"}`}
-                                  key={outcome}
-                                  onClick={() => {
-                                    const updated = [...draft.comboSelections];
-                                    updated[idx] = { ...updated[idx], outcome };
-                                    setDraft((current) => ({ ...current, comboSelections: updated }));
-                                  }}
-                                  type="button"
-                                >
-                                  {comboOutcomeLabels[outcome]}
-                                </button>
-                              ))}
-                            </div>
                             <button
                               className="rounded-xl bg-rose-50 px-2 text-sm font-bold text-rose-700 active:scale-95 dark:bg-rose-400/10 dark:text-rose-200"
                               onClick={() => {
@@ -1053,7 +1025,7 @@ export default function AppShell() {
                         ))}
                         <button
                           className="w-full rounded-xl border border-dashed border-slate-300 py-2 text-sm font-bold text-slate-500 active:scale-95 dark:border-white/20 dark:text-slate-400"
-                          onClick={() => setDraft((current) => ({ ...current, comboSelections: [...current.comboSelections, { originalRate: 0, amount: 0, outcome: "WIN" }] }))}
+                          onClick={() => setDraft((current) => ({ ...current, comboSelections: [...current.comboSelections, { originalRate: 0 }] }))}
                           type="button"
                         >
                           + Add Selection
@@ -1062,14 +1034,14 @@ export default function AppShell() {
                           <div className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50 p-3 text-sm dark:border-emerald-400/20 dark:bg-emerald-400/10">
                             <p className="text-xs font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Combo Breakdown</p>
                             <div className="mt-1 space-y-1">
-                              {draftComboResult.legResults.map((leg, i) => (
+                              {draft.comboSelections.map((sel, i) => (
                                 <p key={i} className="text-emerald-800 dark:text-emerald-200">
-                                  Leg {i + 1}: {comboOutcomeLabels[draft.comboSelections[i]?.outcome] ?? "?"} → Rate {leg.currentRate.toFixed(4)}, Stake {formatMoney(draft.comboSelections[i]?.amount ?? 0)}, Return {formatMoney(leg.returnAmount)}
+                                  Leg {i + 1}: Rate {sel.originalRate.toFixed(4)}
                                 </p>
                               ))}
-                              <p className="font-bold text-emerald-900 dark:text-emerald-100">Total Stake: {formatMoney(draftComboResult.totalStake)}</p>
+                              <p className="font-bold text-emerald-900 dark:text-emerald-100">Stake: {formatMoney(draftComboResult.stake)}</p>
                               <p className="font-bold text-emerald-900 dark:text-emerald-100">Final Rate: {draftComboResult.finalRate.toFixed(4)}</p>
-                              <p className="font-bold text-emerald-900 dark:text-emerald-100">Total Return: {formatMoney(draftComboResult.totalReturn)}</p>
+                              <p className="font-bold text-emerald-900 dark:text-emerald-100">Return: {formatMoney(draftComboResult.returnAmount)}</p>
                               <p className="font-bold text-emerald-900 dark:text-emerald-100">Net Profit: {formatMoney(draftComboResult.netProfit)}</p>
                             </div>
                           </div>
@@ -1501,37 +1473,6 @@ export default function AppShell() {
                               type="number"
                               value={sel.originalRate || ""}
                             />
-                            <input
-                              className="input"
-                              inputMode="decimal"
-                              min="0"
-                              onChange={(event) => {
-                                const val = parseDraftNumber(event.target.value);
-                                const updated = [...draft.comboSelections];
-                                updated[idx] = { ...updated[idx], amount: val > 0 ? val : 0 };
-                                setDraft((current) => ({ ...current, comboSelections: updated }));
-                              }}
-                              placeholder="Amount"
-                              step="any"
-                              type="number"
-                              value={sel.amount || ""}
-                            />
-                            <div className="flex gap-1 rounded-2xl bg-slate-100 p-1 dark:bg-white/10">
-                              {comboOutcomeOptions.map((outcome) => (
-                                <button
-                                  className={`rounded-xl px-2 py-1 text-xs font-bold transition active:scale-95 ${sel.outcome === outcome ? "bg-white text-ink shadow-sm dark:bg-[#121d19] dark:text-slate-50" : "text-slate-600 hover:text-ink dark:text-slate-400 dark:hover:text-slate-200"}`}
-                                  key={outcome}
-                                  onClick={() => {
-                                    const updated = [...draft.comboSelections];
-                                    updated[idx] = { ...updated[idx], outcome };
-                                    setDraft((current) => ({ ...current, comboSelections: updated }));
-                                  }}
-                                  type="button"
-                                >
-                                  {comboOutcomeLabels[outcome]}
-                                </button>
-                              ))}
-                            </div>
                             <button
                               className="rounded-xl bg-rose-50 px-2 text-sm font-bold text-rose-700 active:scale-95 dark:bg-rose-400/10 dark:text-rose-200"
                               onClick={() => {
@@ -1546,7 +1487,7 @@ export default function AppShell() {
                         ))}
                         <button
                           className="w-full rounded-xl border border-dashed border-slate-300 py-2 text-sm font-bold text-slate-500 active:scale-95 dark:border-white/20 dark:text-slate-400"
-                          onClick={() => setDraft((current) => ({ ...current, comboSelections: [...current.comboSelections, { originalRate: 0, amount: 0, outcome: "WIN" }] }))}
+                          onClick={() => setDraft((current) => ({ ...current, comboSelections: [...current.comboSelections, { originalRate: 0 }] }))}
                           type="button"
                         >
                           + Add Selection
@@ -1555,14 +1496,14 @@ export default function AppShell() {
                           <div className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50 p-3 text-sm dark:border-emerald-400/20 dark:bg-emerald-400/10">
                             <p className="text-xs font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Combo Breakdown</p>
                             <div className="mt-1 space-y-1">
-                              {draftComboResult.legResults.map((leg, i) => (
+                              {draft.comboSelections.map((sel, i) => (
                                 <p key={i} className="text-emerald-800 dark:text-emerald-200">
-                                  Leg {i + 1}: {comboOutcomeLabels[draft.comboSelections[i]?.outcome] ?? "?"} → Rate {leg.currentRate.toFixed(4)}, Stake {formatMoney(draft.comboSelections[i]?.amount ?? 0)}, Return {formatMoney(leg.returnAmount)}
+                                  Leg {i + 1}: Rate {sel.originalRate.toFixed(4)}
                                 </p>
                               ))}
-                              <p className="font-bold text-emerald-900 dark:text-emerald-100">Total Stake: {formatMoney(draftComboResult.totalStake)}</p>
+                              <p className="font-bold text-emerald-900 dark:text-emerald-100">Stake: {formatMoney(draftComboResult.stake)}</p>
                               <p className="font-bold text-emerald-900 dark:text-emerald-100">Final Rate: {draftComboResult.finalRate.toFixed(4)}</p>
-                              <p className="font-bold text-emerald-900 dark:text-emerald-100">Total Return: {formatMoney(draftComboResult.totalReturn)}</p>
+                              <p className="font-bold text-emerald-900 dark:text-emerald-100">Return: {formatMoney(draftComboResult.returnAmount)}</p>
                               <p className="font-bold text-emerald-900 dark:text-emerald-100">Net Profit: {formatMoney(draftComboResult.netProfit)}</p>
                             </div>
                           </div>

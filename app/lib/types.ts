@@ -48,8 +48,6 @@ export type ComboSelectionOutcome = "WIN" | "HALF_WIN" | "DRAW" | "HALF_LOSE" | 
 
 export type ComboSelection = {
   originalRate: number;
-  amount: number;
-  outcome: ComboSelectionOutcome;
 };
 
 export type ComboLeg = {

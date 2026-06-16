@@ -5,7 +5,7 @@ import { jsonError } from "../../../../lib/http";
 import { mapRecord } from "../../../../lib/mappers";
 import { ensureTrackerSchemaIfNeeded } from "../../../../lib/schema";
 import { calculateRecordValues, parseResultType } from "../../../../lib/validation";
-import { calculateComboBet, type Selection } from "../../../../lib/combo";
+import { calculateComboBet } from "../../../../lib/combo";
 
 type Params = { params: { id: string } };
 type Sql = ReturnType<typeof getSql>;
@@ -24,7 +24,6 @@ async function confirmStoredRecord(sql: Sql, id: string, resultType: ReturnType<
 
   const comboLegs = existing.combo_legs ? (typeof existing.combo_legs === "string" ? JSON.parse(existing.combo_legs) : existing.combo_legs) : null;
   const amount = Number(existing.amount);
-  const rate = Number(existing.rate);
 
   let finalReturnAmount: number;
   let finalProfit: number;
@@ -32,17 +31,14 @@ async function confirmStoredRecord(sql: Sql, id: string, resultType: ReturnType<
 
   if (comboLegs && Array.isArray(comboLegs) && comboLegs.length > 0) {
     // Combo: apply resultType to all legs and calculate
-    const selections: Selection[] = comboLegs.map((leg: { rate: number; amount: number }) => ({
-      originalRate: leg.rate,
-      amount: leg.amount,
-      outcome: resultType as Selection["outcome"],
-    }));
-    const comboResult = calculateComboBet(selections);
-    finalReturnAmount = comboResult.totalReturn;
+    const rates = comboLegs.map((leg: { originalRate: number }) => leg.originalRate);
+    const comboResult = calculateComboBet(amount, rates);
+    finalReturnAmount = comboResult.returnAmount;
     finalProfit = comboResult.netProfit;
     finalResultType = comboResult.netProfit > 0 ? "win" : comboResult.netProfit < 0 ? "loss" : "draw";
   } else {
     // Single bet
+    const rate = Number(existing.rate);
     const { returnAmount, profit } = calculateRecordValues(amount, rate, resultType);
     finalReturnAmount = returnAmount;
     finalProfit = profit;
