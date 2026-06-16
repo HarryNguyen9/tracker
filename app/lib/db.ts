@@ -1,5 +1,5 @@
 import { neon } from "@neondatabase/serverless";
-import type { RecordStatus, ResultType, WorldCupMatchStatus } from "./types";
+import type { RecordStatus, ResultType, WorldCupMatchStatus, ComboLegRow } from "./types";
 
 export type PlayerRow = {
   id: string;
@@ -18,6 +18,7 @@ export type RecordRow = {
   return_amount: string | number;
   profit: string | number;
   note: string | null;
+  combo_legs: string | null; // JSON string from Postgres jsonb
   deleted_at: string | Date | null;
   delete_reason: string | null;
   created_at: string | Date;
@@ -56,4 +57,13 @@ export function getSql() {
 
 export function isDatabaseConfigError(error: unknown) {
   return error instanceof Error && error.message === "Database connection string is missing.";
+}
+
+export function parseComboLegs(value: string | null): ComboLegRow[] | null {
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as ComboLegRow[];
+  } catch {
+    return null;
+  }
 }

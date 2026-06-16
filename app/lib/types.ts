@@ -9,6 +9,11 @@ export type Player = {
   updatedAt: string;
 };
 
+export type ComboLegRow = {
+  amount: number;
+  rate: number;
+};
+
 export type RecordItem = {
   id: string;
   playerId: string;
@@ -19,6 +24,7 @@ export type RecordItem = {
   returnAmount: number;
   profit: number;
   note: string | null;
+  comboLegs: ComboLegRow[] | null;
   deletedAt: string | null;
   deleteReason: string | null;
   createdAt: string;
@@ -45,8 +51,12 @@ export type RecordWithBalance = RecordItem & {
 
 export type ComboSelectionOutcome = "WIN" | "HALF_WIN" | "DRAW" | "HALF_LOSE" | "LOSE";
 
-export type ComboSelection = {
-  originalRate: number;
+export type ComboLegDraft = {
+  amount: string;
+  rate: string;
+};
+
+export type ComboSelection = ComboLegDraft & {
   outcome: ComboSelectionOutcome;
 };
 
@@ -55,7 +65,7 @@ export type RecordDraft = {
   rate: string;
   note: string;
   comboMode: boolean;
-  comboSelections: ComboSelection[];
+  comboSelections: ComboLegDraft[];
 };
 
 export type WorldCupMatch = {
