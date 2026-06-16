@@ -1,63 +1,70 @@
-/**
- * Tính toán kết quả cho một combo record.
- * Mỗi leg có amount + rate riêng.
- * Khi confirm, mỗi leg được tính độc lập theo resultType, kết quả được cộng dồn.
- */
+export type SelectionOutcome = "WIN" | "HALF_WIN" | "DRAW" | "HALF_LOSE" | "LOSE";
 
-import type { ComboLegRow, ResultType } from "./types";
-import { calculateRecordValues } from "./validation";
+export type Selection = {
+  originalRate: number;
+  outcome: SelectionOutcome;
+};
 
-export type ComboConfirmResult = {
+export type ComboBetResult = {
+  finalRate: number;
   totalReturn: number;
-  totalProfit: number;
-  legReturns: number[];
-  legProfits: number[];
+  netProfit: number;
+  currentRates: number[];
 };
 
 /**
- * Tính toán kết quả combo khi đã có resultType cho mỗi leg.
- * @param legs - danh sách các leg (amount, rate)
- * @param legResults - resultType tương ứng cho từng leg
+ * Tính toán cược xiên (Combo/Parlay bet).
+ *
+ * @param stake - Số tiền đặt cược.
+ * @param selections - Danh sách các lựa chọn, mỗi lựa chọn có tỷ lệ gốc và kết quả.
+ * @returns Kết quả bao gồm tỷ lệ cuối, tổng tiền trả về, lợi nhuận ròng và từng currentRate.
  */
-export function calculateComboResult(
-  legs: ComboLegRow[],
-  legResults: ResultType[]
-): ComboConfirmResult {
-  if (legs.length === 0) {
-    throw new Error("At least one leg is required");
+export function calculateComboBet(
+  stake: number,
+  selections: Selection[]
+): ComboBetResult {
+  if (stake <= 0) {
+    throw new Error("Stake must be greater than 0");
   }
-  if (legs.length !== legResults.length) {
-    throw new Error("Each leg must have a result type");
-  }
-
-  const legReturns: number[] = [];
-  const legProfits: number[] = [];
-  let totalReturn = 0;
-  let totalProfit = 0;
-
-  for (let i = 0; i < legs.length; i++) {
-    const leg = legs[i];
-    const result = calculateRecordValues(leg.amount, leg.rate, legResults[i]);
-    legReturns.push(result.returnAmount);
-    legProfits.push(result.profit);
-    totalReturn += result.returnAmount;
-    totalProfit += result.profit;
+  if (selections.length === 0) {
+    throw new Error("At least one selection is required");
   }
 
-  return { totalReturn, totalProfit, legReturns, legProfits };
-}
+  const currentRates: number[] = [];
+  let finalRate = 1;
 
-/**
- * Tính tổng số tiền đặt cược (tổng amount các leg)
- */
-export function calculateComboStake(legs: ComboLegRow[]): number {
-  return legs.reduce((sum, leg) => sum + leg.amount, 0);
-}
+  for (const selection of selections) {
+    let currentRate: number;
 
-/**
- * Tính tỷ lệ tương đương (totalReturn / totalStake)
- */
-export function calculateComboEffectiveRate(totalReturn: number, totalStake: number): number {
-  if (totalStake <= 0) return 0;
-  return totalReturn / totalStake;
+    switch (selection.outcome) {
+      case "WIN":
+        currentRate = selection.originalRate;
+        break;
+      case "HALF_WIN":
+        currentRate = 1 + (selection.originalRate - 1) / 2;
+        break;
+      case "DRAW":
+        currentRate = 1.0;
+        break;
+      case "HALF_LOSE":
+        currentRate = 0.5;
+        break;
+      case "LOSE":
+        // Cả combo thua, dừng ngay
+        currentRate = 0.0;
+        currentRates.push(currentRate);
+        finalRate = 0;
+        return { finalRate: 0, totalReturn: 0, netProfit: -stake, currentRates };
+      default:
+        throw new Error(`Unknown outcome: ${selection.outcome}`);
+    }
+
+    currentRates.push(currentRate);
+    finalRate *= currentRate;
+  }
+
+  const totalReturn = stake * finalRate;
+  const netProfit = totalReturn - stake;
+
+  return { finalRate, totalReturn, netProfit, currentRates };
 }

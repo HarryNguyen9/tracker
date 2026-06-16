@@ -2,18 +2,17 @@
 
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import { formatDate, formatMoney, formatNumber } from "../app/lib/format";
-import type { ComboLegRow, ComboSelectionOutcome, PlayerSummary, RecordItem, RecordWithBalance, ResultType, WorldCupMatch } from "../app/lib/types";
-import { calculateComboResult, calculateComboStake } from "../app/lib/combo";
+import type { ComboSelection, PlayerSummary, RecordItem, RecordWithBalance, ResultType, WorldCupMatch } from "../app/lib/types";
+import { calculateComboBet } from "../app/lib/combo";
 
 type LoadState = "idle" | "loading" | "ready" | "error";
-type ComboLegDraft = { amount: string; rate: string };
-type RecordDraft = { amount: string; rate: string; note: string; comboMode: boolean; comboLegs: ComboLegDraft[] };
+type RecordDraft = { amount: string; rate: string; note: string; comboMode: boolean; comboSelections: ComboSelection[] };
 type PendingUnlockAction = "player" | "record" | "confirm" | null;
 type PendingDelete = { type: "player"; player: PlayerSummary } | { type: "record"; record: RecordWithBalance } | null;
 
-const comboOutcomeLabels: Record<ComboSelectionOutcome, string> = { WIN: "Win", HALF_WIN: "½ Win", DRAW: "Draw", HALF_LOSE: "½ Lose", LOSE: "Lose" };
-const comboOutcomeOptions: ComboSelectionOutcome[] = ["WIN", "HALF_WIN", "DRAW", "HALF_LOSE", "LOSE"];
-const emptyRecordDraft: RecordDraft = { amount: "", rate: "", note: "", comboMode: false, comboLegs: [] };
+const comboOutcomeLabels: Record<string, string> = { WIN: "Win", HALF_WIN: "½ Win", DRAW: "Draw", HALF_LOSE: "½ Lose", LOSE: "Lose" };
+const comboOutcomeOptions: ComboSelection["outcome"][] = ["WIN", "HALF_WIN", "DRAW", "HALF_LOSE", "LOSE"];
+const emptyRecordDraft: RecordDraft = { amount: "", rate: "", note: "", comboMode: false, comboSelections: [] };
 const resultLabels: Record<ResultType, string> = { win: "Win", loss: "Loss", draw: "Draw", win_half: "Win Half", loss_half: "Loss Half" };
 const resultOptions: ResultType[] = ["win", "win_half", "draw", "loss_half", "loss"];
 const quickAmountIncrements = [1, 2, 5, 10, 20];
@@ -34,7 +33,7 @@ function csvCell(value: CsvValue) {
   return `"${text.replace(/"/g, '""')}"`;
 }
 
-function downloadCsv(filename: string, rows: (string | number | null | undefined)[][]) {
+function downloadCsv(filename: string, rows: CsvValue[][]) {
   const csv = rows.map((row) => row.map(csvCell).join(",")).join("\r\n");
   const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -51,7 +50,7 @@ function fileSafeName(value: string) {
   return value.trim().replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "player";
 }
 
-function recordExportHeader(): CsvValue[] {
+function recordExportHeader() {
   return ["Player", "Created At", "Status", "Result", "Amount", "Rate", "Expected Return", "Return", "Profit", "Balance", "Note"];
 }
 
@@ -104,1047 +103,2152 @@ function applyClientBalance(items: RecordWithBalance[]) {
   });
 }
 
-function outcomeToResultType(outcome: ComboSelectionOutcome): ResultType {
-  switch (outcome) {
-    case "WIN": return "win";
-    case "HALF_WIN": return "win_half";
-    case "DRAW": return "draw";
-    case "HALF_LOSE": return "loss_half";
-    case "LOSE": return "loss";
+function upsertRecord(items: RecordWithBalance[], record: RecordItem) {
+  const nextRecord: RecordWithBalance = { ...record, balance: null };
+  const nextItems = items.some((item) => item.id === record.id)
+    ? items.map((item) => (item.id === record.id ? nextRecord : item))
+    : [...items, nextRecord];
+
+  nextItems.sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
+  return applyClientBalance(nextItems);
+}
+
+function applyConfirmedRecordSummary(player: PlayerSummary, record: RecordItem) {
+  const totalProfit = player.totalProfit + record.profit;
+  return {
+    ...player,
+    totalAmount: player.totalAmount + record.amount,
+    totalReturn: player.totalReturn + record.returnAmount,
+    totalProfit,
+    balance: totalProfit,
+    finalizedRecordCount: player.finalizedRecordCount + 1,
+    pendingRecordCount: Math.max(0, player.pendingRecordCount - 1),
+    winCount: player.winCount + (record.resultType === "win" || record.resultType === "win_half" ? 1 : 0),
+    lossCount: player.lossCount + (record.resultType === "loss" || record.resultType === "loss_half" ? 1 : 0),
+    drawCount: player.drawCount + (record.resultType === "draw" ? 1 : 0),
+  };
+}
+
+class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
   }
 }
 
-function getComboLegPreview(leg: ComboLegDraft, outcome: ComboSelectionOutcome) {
-  const amount = parseDraftNumber(leg.amount);
-  const rate = parseDraftNumber(leg.rate);
-  if (amount <= 0 || rate <= 0) return { returnAmount: 0, profit: 0 };
-  const result = outcomeToResultType(outcome);
-  const expected = amount * rate;
-  let returnAmount = 0;
-  switch (result) {
-    case "win": returnAmount = expected; break;
-    case "win_half": returnAmount = amount + (expected - amount) / 2; break;
-    case "draw": returnAmount = amount; break;
-    case "loss_half": returnAmount = amount / 2; break;
-    case "loss": returnAmount = 0; break;
+async function readJson<T>(response: Response): Promise<T> {
+  const data = await response.json();
+  if (!response.ok) {
+    throw new ApiError(data.error ?? "Request failed.", response.status);
   }
-  return { returnAmount, profit: returnAmount - amount };
-}
-
-function getComboStakeFromLegs(legs: ComboLegDraft[]) {
-  return legs.reduce((sum, leg) => sum + parseDraftNumber(leg.amount), 0);
-}
-
-function getComboTotalPreview(legs: ComboLegDraft[], outcomes: ComboSelectionOutcome[]) {
-  let totalReturn = 0;
-  let totalProfit = 0;
-  legs.forEach((leg, i) => {
-    const outcome = outcomes[i] || "WIN";
-    const { returnAmount, profit } = getComboLegPreview(leg, outcome);
-    totalReturn += returnAmount;
-    totalProfit += profit;
-  });
-  return { totalReturn, totalProfit };
+  return data as T;
 }
 
 export default function AppShell() {
-  const [loadState, setLoadState] = useState<LoadState>("idle");
-
-  /* ---------- players ---------- */
   const [players, setPlayers] = useState<PlayerSummary[]>([]);
-  const [playerName, setPlayerName] = useState("");
-
-  /* ---------- records ---------- */
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [records, setRecords] = useState<RecordWithBalance[]>([]);
-  const [recordsLoadState, setRecordsLoadState] = useState<LoadState>("idle");
-  const [playerFilter, setPlayerFilter] = useState("");
-  const [showFinalized, setShowFinalized] = useState(true);
-
-  /* ---------- drafts ---------- */
-  const [recordDraft, setRecordDraft] = useState<RecordDraft>({ ...emptyRecordDraft });
-
-  /* ---------- confirm modal ---------- */
-  const [confirming, setConfirming] = useState<RecordWithBalance | null>(null);
-  const [confirmResult, setConfirmResult] = useState<ResultType>("win");
-  const [confirmLegOutcomes, setConfirmLegOutcomes] = useState<ComboSelectionOutcome[]>([]);
-
-  /* ---------- unlock modal ---------- */
-  const [unlockKey, setUnlockKey] = useState("");
-  const [pendingUnlock, setPendingUnlock] = useState<PendingUnlockAction>(null);
-
-  /* ---------- delete ---------- */
+  const [loadState, setLoadState] = useState<LoadState>("idle");
+  const [recordState, setRecordState] = useState<LoadState>("idle");
+  const [error, setError] = useState("");
+  const [recordError, setRecordError] = useState("");
+  const [editMode, setEditMode] = useState(false);
+  const [addPlayerOpen, setAddPlayerOpen] = useState(false);
+  const [recordFormOpen, setRecordFormOpen] = useState(false);
+  const [pendingUnlockAction, setPendingUnlockAction] = useState<PendingUnlockAction>(null);
+  const [pendingConfirmRecordId, setPendingConfirmRecordId] = useState<string | null>(null);
+  const [confirmingRecordId, setConfirmingRecordId] = useState<string | null>(null);
+  const [selectedResultType, setSelectedResultType] = useState<ResultType>("win");
+  const [playerName, setPlayerName] = useState("");
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [draft, setDraft] = useState<RecordDraft>(emptyRecordDraft);
+  const [editingRecordId, setEditingRecordId] = useState<string | null>(null);
+  const [pinOpen, setPinOpen] = useState(false);
+  const [pin, setPin] = useState("");
+  const [pinError, setPinError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [darkMode, setDarkMode] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete>(null);
+  const [deleteReason, setDeleteReason] = useState("");
+  const [deleteReasonError, setDeleteReasonError] = useState("");
+  const [expandedRecordId, setExpandedRecordId] = useState<string | null>(null);
+  const [trashOpen, setTrashOpen] = useState(false);
+  const [finalizedOpen, setFinalizedOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
+  const [scheduleMatches, setScheduleMatches] = useState<WorldCupMatch[]>([]);
+  const [scheduleState, setScheduleState] = useState<LoadState>("idle");
+  const [isBackgroundSyncing, setIsBackgroundSyncing] = useState(false);
+  const [scheduleError, setScheduleError] = useState("");
+  const [scheduleSyncedAt, setScheduleSyncedAt] = useState<string | null>(null);
+  const [trashRecords, setTrashRecords] = useState<RecordWithBalance[]>([]);
+  const [trashState, setTrashState] = useState<LoadState>("idle");
 
-  /* ---------- world cup ---------- */
-  const [schedule, setSchedule] = useState<WorldCupMatch[]>([]);
-  const [scheduleLoadState, setScheduleLoadState] = useState<LoadState>("idle");
-
-  /* ---------- player totals ---------- */
-  const playerTotals = useMemo(() => {
-    const map = new Map<string, PlayerSummary & { totalProfit: number; totalStake: number; pendingCount: number }>();
-    players.forEach((p) => map.set(p.id, { ...p, totalProfit: 0, totalStake: 0, pendingCount: 0 }));
-
-    records.forEach((r) => {
-      const entry = map.get(r.playerId);
-      if (!entry) return;
-      if (r.status === "pending") {
-        entry.pendingCount++;
-      } else {
-        entry.totalProfit += r.profit;
-        entry.totalStake += r.amount;
+  const selectedPlayer = players.find((player) => player.id === selectedId) ?? null;
+  const pendingRecords = useMemo(() => records.filter((r) => r.status === "pending"), [records]);
+  const finalizedRecords = useMemo(() => records.filter((r) => r.status === "finalized"), [records]);
+  const draftComboResult = useMemo(() => {
+    if (!draft.comboMode || draft.comboSelections.length === 0) return null;
+    const amount = parseDraftNumber(draft.amount);
+    if (amount <= 0) return null;
+    try {
+      return calculateComboBet(amount, draft.comboSelections);
+    } catch {
+      return null;
+    }
+  }, [draft.amount, draft.comboMode, draft.comboSelections]);
+  const draftExpectedReturn = draft.comboMode && draftComboResult ? draftComboResult.totalReturn : getExpectedReturn(parseDraftNumber(draft.amount), parseDraftNumber(draft.rate));
+  const recentAmounts = useMemo(() => {
+    const uniqueAmounts: number[] = [];
+    [...records].reverse().forEach((record) => {
+      if (!uniqueAmounts.includes(record.amount)) {
+        uniqueAmounts[uniqueAmounts.length] = record.amount;
       }
     });
-    return [...map.values()];
-  }, [players, records]);
+    return uniqueAmounts.slice(0, 4);
+  }, [records]);
+  const totalSummary = useMemo(
+    () => ({
+      amount: selectedPlayer?.totalAmount ?? 0,
+      valueReturn: selectedPlayer?.totalReturn ?? 0,
+      profit: selectedPlayer?.totalProfit ?? 0,
+      finalizedCount: selectedPlayer?.finalizedRecordCount ?? 0,
+      pendingCount: selectedPlayer?.pendingRecordCount ?? 0,
+    }),
+    [selectedPlayer],
+  );
 
-  const filteredRecords = useMemo(() => {
-    let items = records;
-    if (playerFilter) {
-      items = items.filter((r) => r.playerId === playerFilter);
+  async function loadPlayers(nextSelectedId?: string | null, options: { silent?: boolean } = {}) {
+    if (!options.silent) {
+      setLoadState("loading");
     }
-    if (!showFinalized) {
-      items = items.filter((r) => r.status !== "finalized");
-    }
-    return items;
-  }, [records, playerFilter, showFinalized]);
-
-  const isClientPasswordSet = !!process.env.NEXT_PUBLIC_CLIENT_PASSWORD;
-
-  /* ========== load players ========== */
-  async function loadPlayers() {
+    setError("");
     try {
-      const res = await fetch("/api/players");
-      if (res.ok) {
-        const json = await res.json();
-        setPlayers(json.players);
-      }
-    } catch { /* ignore */ }
-  }
-
-  /* ========== load records ========== */
-  async function loadRecords() {
-    setRecordsLoadState("loading");
-    try {
-      const res = await fetch("/api/records");
-      if (!res.ok) throw new Error("Failed to load records");
-      const json = await res.json();
-      setRecords(applyClientBalance(json.records));
-      setRecordsLoadState("ready");
-    } catch {
-      setRecordsLoadState("error");
+      const data = await readJson<{ players: PlayerSummary[] }>(await fetch("/api/players"));
+      setPlayers(data.players);
+      const preferred = nextSelectedId === undefined ? selectedId : nextSelectedId;
+      const nextId = preferred && data.players.some((player) => player.id === preferred) ? preferred : data.players[0]?.id ?? null;
+      setSelectedId(nextId);
+      setLoadState("ready");
+    } catch (err) {
+      console.error("Unable to load players", err);
+      setError(err instanceof ApiError ? err.message : "Unable to load data. Please try again.");
+      setLoadState("error");
     }
   }
 
-  /* ========== load schedule ========== */
-  async function loadSchedule() {
-    setScheduleLoadState("loading");
-    try {
-      const res = await fetch("https://worldcupjson.net/matches");
-      if (!res.ok) throw new Error("Failed to load schedule");
-      const json = await res.json();
-      setSchedule(json);
-      setScheduleLoadState("ready");
-    } catch {
-      setScheduleLoadState("error");
-    }
-  }
-
-  /* ========== init ========== */
-  useEffect(() => {
-    loadPlayers();
-    loadRecords();
-    loadSchedule();
-    setLoadState("ready");
-  }, []);
-
-  /* ========== player crud ========== */
-  async function handleAddPlayer(e: FormEvent) {
-    e.preventDefault();
-    if (!playerName.trim()) return;
-    try {
-      const res = await fetch("/api/players", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: playerName.trim() }),
-      });
-      if (res.ok) {
-        setPlayerName("");
-        loadPlayers();
-      }
-    } catch { /* ignore */ }
-  }
-
-  function confirmDeletePlayer(player: PlayerSummary) {
-    setPendingDelete({ type: "player", player });
-  }
-
-  async function handleDeletePlayer(playerId: string) {
-    try {
-      await fetch(`/api/players/${playerId}`, { method: "DELETE" });
-      loadPlayers();
-    } catch { /* ignore */ }
-  }
-
-  /* ========== record creation helpers ========== */
-  function addComboLeg() {
-    setRecordDraft((prev) => ({
-      ...prev,
-      comboLegs: [...prev.comboLegs, { amount: "", rate: "" }],
-    }));
-  }
-
-  function updateComboLeg(index: number, field: keyof ComboLegDraft, value: string) {
-    setRecordDraft((prev) => {
-      const legs = prev.comboLegs.map((leg, i) =>
-        i === index ? { ...leg, [field]: value } : leg
-      );
-      return { ...prev, comboLegs: legs };
-    });
-  }
-
-  function removeComboLeg(index: number) {
-    setRecordDraft((prev) => ({
-      ...prev,
-      comboLegs: prev.comboLegs.filter((_, i) => i !== index),
-    }));
-  }
-
-  function getTotalStake() {
-    if (recordDraft.comboMode) {
-      return getComboStakeFromLegs(recordDraft.comboLegs);
-    }
-    return parseDraftNumber(recordDraft.amount);
-  }
-
-  function getEffectiveRate() {
-    if (recordDraft.comboMode) {
-      const legs = recordDraft.comboLegs;
-      const stake = getComboStakeFromLegs(legs);
-      if (stake <= 0) return 0;
-      const weightedRate = legs.reduce(
-        (sum, leg) => sum + parseDraftNumber(leg.amount) * parseDraftNumber(leg.rate),
-        0
-      );
-      return weightedRate / stake;
-    }
-    return parseDraftNumber(recordDraft.rate);
-  }
-
-  /* ========== create record ========== */
-  async function handleCreateRecord(e: FormEvent) {
-    e.preventDefault();
-    if (recordDraft.comboMode) {
-      // Validate all legs have amount and rate
-      const valid = recordDraft.comboLegs.every(
-        (leg) => parseDraftNumber(leg.amount) > 0 && parseDraftNumber(leg.rate) > 0
-      );
-      if (!valid || recordDraft.comboLegs.length === 0) return;
-    } else if (parseDraftNumber(recordDraft.amount) <= 0 || parseDraftNumber(recordDraft.rate) <= 0) {
+  async function loadRecords(playerId: string | null, options: { silent?: boolean } = {}) {
+    if (!playerId) {
+      setRecords([]);
       return;
     }
 
+    if (!options.silent) {
+      setRecordState("loading");
+    }
+    setRecordError("");
     try {
-      const body: Record<string, unknown> = {
-        playerId: playerFilter || undefined,
-        amount: recordDraft.comboMode ? getTotalStake() : parseDraftNumber(recordDraft.amount),
-        rate: recordDraft.comboMode ? getEffectiveRate() : parseDraftNumber(recordDraft.rate),
-        note: recordDraft.note.trim() || undefined,
-      };
-
-      if (recordDraft.comboMode) {
-        body.comboLegs = recordDraft.comboLegs.map((leg) => ({
-          amount: parseDraftNumber(leg.amount),
-          rate: parseDraftNumber(leg.rate),
-        }));
-      }
-
-      const res = await fetch("/api/records", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (res.ok) {
-        setRecordDraft({ ...emptyRecordDraft });
-        loadRecords();
-      }
-    } catch { /* ignore */ }
-  }
-
-  /* ========== confirm record ========== */
-  function openConfirm(record: RecordWithBalance) {
-    setConfirming(record);
-    setConfirmResult("win");
-
-    if (record.comboLegs && record.comboLegs.length > 0) {
-      setConfirmLegOutcomes(record.comboLegs.map(() => "WIN" as ComboSelectionOutcome));
-    } else {
-      setConfirmLegOutcomes([]);
+      const data = await readJson<{ records: RecordWithBalance[] }>(await fetch(`/api/records?playerId=${playerId}`));
+      setRecords(data.records);
+      setRecordState("ready");
+    } catch (err) {
+      console.error("Unable to load records", err);
+      setRecordError(err instanceof ApiError ? err.message : "Unable to load data. Please try again.");
+      setRecordState("error");
     }
   }
 
-  function updateConfirmLegOutcome(index: number, outcome: ComboSelectionOutcome) {
-    setConfirmLegOutcomes((prev) => {
-      const next = [...prev];
-      next[index] = outcome;
-      return next;
+  async function loadTrashRecords(playerId: string | null) {
+    if (!playerId) {
+      setTrashRecords([]);
+      return;
+    }
+
+    setTrashState("loading");
+    setRecordError("");
+    try {
+      const data = await readJson<{ records: RecordWithBalance[] }>(await fetch(`/api/records?playerId=${playerId}&trash=1`));
+      setTrashRecords(data.records);
+      setTrashState("ready");
+    } catch (err) {
+      console.error("Unable to load trash", err);
+      setRecordError(err instanceof ApiError ? err.message : "Unable to load trash. Please try again.");
+      setTrashState("error");
+    }
+  }
+
+  async function loadWorldCupMatches() {
+    setScheduleState("loading");
+    setScheduleError("");
+    try {
+      const data = await readJson<{ matches: WorldCupMatch[] }>(await fetch("/api/world-cup/matches"));
+      setScheduleMatches(data.matches);
+      setScheduleSyncedAt(data.matches[0]?.lastSyncedAt ?? null);
+      setScheduleState("ready");
+    } catch (err) {
+      console.error("Unable to load World Cup schedule", err);
+      setScheduleError(err instanceof ApiError ? err.message : "Unable to load World Cup schedule. Please try again.");
+      setScheduleState("error");
+    }
+  }
+
+  async function syncWorldCupMatches(isBackground = false) {
+    if (!isBackground) {
+      setScheduleState("loading");
+    } else {
+      setIsBackgroundSyncing(true);
+    }
+    setScheduleError("");
+    try {
+      const data = await readJson<{ matches: WorldCupMatch[]; syncedAt: string }>(
+        await fetch("/api/world-cup/sync", { method: "POST" }),
+      );
+      setScheduleMatches(data.matches);
+      setScheduleSyncedAt(data.syncedAt);
+      setScheduleState("ready");
+    } catch (err) {
+      console.error("Unable to sync World Cup schedule", err);
+      const message = err instanceof ApiError ? err.message : "Unable to sync World Cup schedule. Please try again.";
+      if (!isBackground) {
+        try {
+          const cached = await readJson<{ matches: WorldCupMatch[] }>(await fetch("/api/world-cup/matches"));
+          setScheduleMatches(cached.matches);
+          setScheduleSyncedAt(cached.matches[0]?.lastSyncedAt ?? null);
+        } catch {
+          setScheduleMatches([]);
+        }
+      }
+      setScheduleError(message);
+      setScheduleState("error");
+    } finally {
+      if (isBackground) {
+        setIsBackgroundSyncing(false);
+      }
+    }
+  }
+
+  function openSchedule() {
+    setScheduleOpen(true);
+    void loadWorldCupMatches().then(() => {
+      void syncWorldCupMatches(true);
     });
   }
 
-  function getConfirmPreview() {
-    if (!confirming) return { totalReturn: 0, totalProfit: 0, effectiveRate: 0, legResults: [] };
-
-    if (confirming.comboLegs && confirming.comboLegs.length > 0) {
-      const legs = confirming.comboLegs.map(l => ({ amount: String(l.amount), rate: String(l.rate) }));
-      const preview = getComboTotalPreview(legs, confirmLegOutcomes);
-      const stake = getComboStakeFromLegs(legs);
-      const legResults = legs.map((leg, i) => {
-        const outcome = confirmLegOutcomes[i] || "WIN";
-        const { returnAmount, profit } = getComboLegPreview(leg, outcome);
-        return { amount: parseDraftNumber(leg.amount), rate: parseDraftNumber(leg.rate), outcome, returnAmount, profit };
-      });
-      return { ...preview, effectiveRate: stake > 0 ? preview.totalReturn / stake : 0, legResults };
-    }
-
-    const amount = confirming.amount;
-    const rate = confirming.rate;
-    const result = outcomeToResultType(resultTypeToComboOutcome(confirmResult));
-    const expected = amount * rate;
-    let returnAmount = 0;
-    switch (result) {
-      case "win": returnAmount = expected; break;
-      case "win_half": returnAmount = amount + (expected - amount) / 2; break;
-      case "draw": returnAmount = amount; break;
-      case "loss_half": returnAmount = amount / 2; break;
-      case "loss": returnAmount = 0; break;
-    }
-    const profit = returnAmount - amount;
-    return { totalReturn: returnAmount, totalProfit: profit, effectiveRate: rate, legResults: [] };
+  function refreshSelectedData(playerId: string | null) {
+    void Promise.all([loadRecords(playerId, { silent: true }), loadPlayers(playerId, { silent: true })]).catch((err) => {
+      console.error("Unable to refresh data", err);
+      setError(err instanceof ApiError ? err.message : "Unable to refresh data. Please try again.");
+    });
   }
 
-  function resultTypeToComboOutcome(result: ResultType): ComboSelectionOutcome {
-    switch (result) {
-      case "win": return "WIN";
-      case "win_half": return "HALF_WIN";
-      case "draw": return "DRAW";
-      case "loss_half": return "HALF_LOSE";
-      case "loss": return "LOSE";
+  useEffect(() => {
+    loadPlayers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const savedTheme = window.localStorage.getItem("tracker-theme");
+    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    setDarkMode(savedTheme ? savedTheme === "dark" : prefersDark);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", darkMode);
+    window.localStorage.setItem("tracker-theme", darkMode ? "dark" : "light");
+  }, [darkMode]);
+
+  useEffect(() => {
+    setTrashOpen(false);
+    setTrashRecords([]);
+    setFinalizedOpen(false);
+    loadRecords(selectedId);
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (mobileDetailOpen) {
+      // Only lock body scroll on mobile (< 640px where sm:hidden applies)
+      if (window.matchMedia("(min-width: 640px)").matches) return;
+      const previousOverflow = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+      return () => {
+        document.body.style.overflow = previousOverflow;
+      };
     }
+  }, [mobileDetailOpen]);
+
+  function openPinFor(action: PendingUnlockAction = null) {
+    setPendingUnlockAction(action);
+    setPinError("");
+    setPinOpen(true);
   }
 
-  async function handleConfirm() {
-    if (!confirming) return;
+  function requestEdit(action: () => void, pendingAction: PendingUnlockAction = null) {
+    if (editMode) {
+      action();
+      return;
+    }
+    openPinFor(pendingAction);
+  }
 
+  async function verifyPin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setPinError("");
     try {
-      const body: Record<string, unknown> = {};
+      await readJson<{ ok: boolean }>(
+        await fetch("/api/auth/edit-pin", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pin }),
+        }),
+      );
+      setPin("");
+      setPinOpen(false);
+      setEditMode(true);
+      if (pendingUnlockAction === "player") {
+        setAddPlayerOpen(true);
+      }
+      if (pendingUnlockAction === "record") {
+        setRecordFormOpen(true);
+      }
+      if (pendingUnlockAction === "confirm" && pendingConfirmRecordId) {
+        setConfirmingRecordId(pendingConfirmRecordId);
+        setSelectedResultType("win");
+      }
+      setPendingUnlockAction(null);
+      setPendingConfirmRecordId(null);
+      await Promise.all([loadPlayers(selectedId, { silent: true }), loadRecords(selectedId, { silent: true })]);
+    } catch {
+      setPinError("Invalid PIN.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
-      if (confirming.comboLegs && confirming.comboLegs.length > 0) {
-        // Combo confirm - send leg results
-        body.legResults = confirmLegOutcomes;
+  async function runEdit(action: () => Promise<void>) {
+    setBusy(true);
+    try {
+      await action();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        setEditMode(false);
+        openPinFor(null);
+        return;
+      }
+      console.error("Unable to save changes", err);
+      setError("Unable to save changes. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createPlayer(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editMode) {
+      openPinFor("player");
+      return;
+    }
+    await runEdit(async () => {
+      const data = await readJson<{ player: { id: string } }>(
+        await fetch("/api/players", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: playerName }),
+        }),
+      );
+      setPlayerName("");
+      setAddPlayerOpen(false);
+      await loadPlayers(data.player.id);
+    });
+  }
+
+  async function saveRename(playerId: string) {
+    if (!editMode) {
+      openPinFor(null);
+      return;
+    }
+    await runEdit(async () => {
+      await readJson(
+        await fetch(`/api/players/${playerId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: renameValue }),
+        }),
+      );
+      setRenamingId(null);
+      setRenameValue("");
+      await loadPlayers(playerId);
+    });
+  }
+
+  async function removePlayer(player: PlayerSummary) {
+    if (!editMode) {
+      openPinFor(null);
+      return;
+    }
+    setPendingDelete({ type: "player", player });
+  }
+
+  async function confirmDelete() {
+    if (!pendingDelete) return;
+
+    const deleteTarget = pendingDelete;
+    const reason = deleteReason.trim();
+    if (deleteTarget.type === "record" && !reason) {
+      setDeleteReasonError("Delete reason is required.");
+      return;
+    }
+
+    await runEdit(async () => {
+      if (deleteTarget.type === "player") {
+        await readJson(await fetch(`/api/players/${deleteTarget.player.id}`, { method: "DELETE" }));
+        await loadPlayers(deleteTarget.player.id === selectedId ? null : selectedId);
       } else {
-        body.resultType = confirmResult;
+        await readJson(
+          await fetch(`/api/records/${deleteTarget.record.id}`, {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ reason }),
+          }),
+        );
+        await Promise.all([
+          loadRecords(selectedId, { silent: true }),
+          loadPlayers(selectedId, { silent: true }),
+          trashOpen ? loadTrashRecords(selectedId) : Promise.resolve(),
+        ]);
       }
-
-      const res = await fetch(`/api/records/${confirming.id}/confirm`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (res.ok) {
-        setConfirming(null);
-        loadRecords();
-      }
-    } catch { /* ignore */ }
+      setPendingDelete(null);
+      setDeleteReason("");
+      setDeleteReasonError("");
+    });
   }
 
-  /* ========== delete record ========== */
-  function confirmDeleteRecord(record: RecordWithBalance) {
-    setPendingDelete({ type: "record", record });
-  }
-
-  async function handleDeleteRecord(recordId: string) {
-    try {
-      await fetch(`/api/records/${recordId}`, { method: "DELETE" });
-      loadRecords();
-    } catch { /* ignore */ }
-  }
-
-  /* ========== unlock ========== */
-  async function handleUnlock(action: PendingUnlockAction) {
-    if (!unlockKey) return;
-    try {
-      const res = await fetch("/api/auth/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key: unlockKey }),
-      });
-      if (res.ok) {
-        setUnlockKey("");
-        setPendingUnlock(null);
-        // Re-trigger the action
-        if (action === "record") {
-          loadRecords();
+  async function saveRecord() {
+    if (!selectedId) return;
+    if (!editMode) {
+      openPinFor("record");
+      return;
+    }
+    setRecordError("");
+    await runEdit(async () => {
+      const isCreating = !editingRecordId;
+      const url = editingRecordId ? `/api/records/${editingRecordId}` : "/api/records";
+      let payload: Record<string, unknown> = { note: draft.note, playerId: selectedId, amount: draft.amount };
+      if (draft.comboMode && draft.comboSelections.length > 0) {
+        const amount = parseDraftNumber(draft.amount);
+        if (amount <= 0) {
+          setRecordError("Amount must be greater than 0 for combo bets.");
+          return;
         }
+        try {
+          const result = calculateComboBet(amount, draft.comboSelections);
+          payload.rate = String(result.finalRate);
+          payload.comboSelections = draft.comboSelections;
+        } catch {
+          setRecordError("Invalid combo selections.");
+          return;
+        }
+      } else {
+        payload.rate = draft.rate;
       }
-    } catch { /* ignore */ }
+      const data = await readJson<{ record: RecordItem }>(
+        await fetch(url, {
+          method: editingRecordId ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }),
+      );
+      setRecords((current) => upsertRecord(current, data.record));
+      if (isCreating) {
+        setPlayers((current) =>
+          current.map((player) =>
+            player.id === selectedId
+              ? { ...player, recordCount: player.recordCount + 1, pendingRecordCount: player.pendingRecordCount + 1 }
+              : player,
+          ),
+        );
+      }
+      resetRecordForm();
+      refreshSelectedData(selectedId);
+    });
   }
 
-  /* ========== render helpers ========== */
-  function renderComboLegForm() {
-    const { comboLegs } = recordDraft;
-    const preview = comboLegs.length > 0
-      ? getComboTotalPreview(comboLegs, comboLegs.map(() => "WIN" as ComboSelectionOutcome))
-      : { totalReturn: 0, totalProfit: 0 };
-
-    return (
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-semibold text-gray-700">Combo Legs</span>
-          <button
-            type="button"
-            onClick={addComboLeg}
-            className="text-xs px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600"
-          >
-            + Add Leg
-          </button>
-        </div>
-
-        {comboLegs.length === 0 && (
-          <p className="text-xs text-gray-500 italic">No legs added yet.</p>
-        )}
-
-        {comboLegs.map((leg, i) => {
-          const { returnAmount: legReturn, profit: legProfit } = getComboLegPreview(leg, "WIN");
-          return (
-            <div key={i} className="flex items-center gap-2">
-              <input
-                type="number"
-                step="any"
-                min="0"
-                placeholder="Amount"
-                value={leg.amount}
-                onChange={(e) => updateComboLeg(i, "amount", e.target.value)}
-                className="w-24 border border-gray-300 rounded px-2 py-1 text-sm"
-              />
-              <span className="text-gray-500 text-xs">×</span>
-              <input
-                type="number"
-                step="any"
-                min="0"
-                placeholder="Rate"
-                value={leg.rate}
-                onChange={(e) => updateComboLeg(i, "rate", e.target.value)}
-                className="w-20 border border-gray-300 rounded px-2 py-1 text-sm"
-              />
-              <span className="text-xs text-gray-500">
-                → {formatMoney(legReturn)}
-              </span>
-              <button
-                type="button"
-                onClick={() => removeComboLeg(i)}
-                className="text-red-500 hover:text-red-700 text-xs"
-              >
-                ✕
-              </button>
-            </div>
-          );
-        })}
-
-        {comboLegs.length > 0 && (
-          <div className="text-sm text-gray-700">
-            Total Stake: <strong>{formatMoney(getComboStakeFromLegs(comboLegs))}</strong>
-            {" | "}Est. Return: <strong>{formatMoney(preview.totalReturn)}</strong>
-            {" | "}Est. Profit: <span className={preview.totalProfit >= 0 ? "text-green-600" : "text-red-600"}>
-              {formatMoney(preview.totalProfit)}
-            </span>
-          </div>
-        )}
-      </div>
-    );
+  async function confirmRecord(recordId: string, resultType: ResultType) {
+    if (!editMode) {
+      setPendingConfirmRecordId(recordId);
+      openPinFor("confirm");
+      return;
+    }
+    await runEdit(async () => {
+      const previousRecord = records.find((record) => record.id === recordId);
+      const data = await readJson<{ record: RecordItem }>(
+        await fetch(`/api/records/${recordId}/confirm`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ resultType }),
+        }),
+      );
+      setRecords((current) => upsertRecord(current, data.record));
+      if (previousRecord?.status === "pending") {
+        setPlayers((current) =>
+          current.map((player) => (player.id === selectedId ? applyConfirmedRecordSummary(player, data.record) : player)),
+        );
+      }
+      setConfirmingRecordId(null);
+      refreshSelectedData(selectedId);
+    });
   }
 
-  function renderComboRecordDetails(record: RecordItem) {
-    const legs = record.comboLegs || [];
-    if (legs.length === 0) return null;
-
-    return (
-      <div className="text-xs text-gray-500 mt-1 space-y-1">
-        <div className="font-semibold text-yellow-600">
-          Combo ({legs.length} legs) | Stake: {formatMoney(record.amount)} | Rate: {formatNumber(record.rate)}
-        </div>
-        {legs.map((leg, i) => (
-          <div key={i} className="pl-2 border-l-2 border-yellow-300 text-[11px]">
-            Leg {i + 1}: {formatMoney(leg.amount)} × {formatNumber(leg.rate)}
-            {record.status === "finalized" && (
-              <span className="ml-1">
-                → {formatMoney(leg.amount * leg.rate)}
-              </span>
-            )}
-          </div>
-        ))}
-      </div>
-    );
+  async function removeRecord(record: RecordWithBalance) {
+    if (!editMode) {
+      openPinFor("record");
+      return;
+    }
+    setPendingDelete({ type: "record", record });
+    setDeleteReason("");
+    setDeleteReasonError("");
   }
 
-  function renderConfirmComboLegs() {
-    if (!confirming || !confirming.comboLegs || confirming.comboLegs.length === 0) return null;
-
-    const preview = getConfirmPreview();
-
-    return (
-      <div className="space-y-3">
-        <div className="font-semibold text-yellow-600">
-          Combo Confirmation ({confirming.comboLegs.length} legs)
-        </div>
-        {confirming.comboLegs.map((leg, i) => {
-          const outcome = confirmLegOutcomes[i] || "WIN";
-          const expected = leg.amount * leg.rate;
-          let legReturn = 0;
-          switch (outcomeToResultType(outcome)) {
-            case "win": legReturn = expected; break;
-            case "win_half": legReturn = leg.amount + (expected - leg.amount) / 2; break;
-            case "draw": legReturn = leg.amount; break;
-            case "loss_half": legReturn = leg.amount / 2; break;
-            case "loss": legReturn = 0; break;
-          }
-          const legProfit = legReturn - leg.amount;
-
-          return (
-            <div key={i} className="border p-2 rounded space-y-1">
-              <div className="text-xs text-gray-500">
-                Leg {i + 1}: {formatMoney(leg.amount)} × {formatNumber(leg.rate)} = {formatMoney(expected)}
-              </div>
-              <div className="flex items-center gap-1">
-                <span className="text-xs text-gray-600">Result:</span>
-                <select
-                  value={outcome}
-                  onChange={(e) => updateConfirmLegOutcome(i, e.target.value as ComboSelectionOutcome)}
-                  className="border border-gray-300 rounded px-1 py-0.5 text-xs"
-                >
-                  {comboOutcomeOptions.map((o) => (
-                    <option key={o} value={o}>{comboOutcomeLabels[o]}</option>
-                  ))}
-                </select>
-                <span className="text-xs text-gray-500">
-                  → {formatMoney(legReturn)} ({legProfit >= 0 ? "+" : ""}{formatMoney(legProfit)})
-                </span>
-              </div>
-            </div>
-          );
-        })}
-
-        <div className="text-sm pt-1 border-t">
-          <div>Total Return: <strong>{formatMoney(preview.totalReturn)}</strong></div>
-          <div>Total Profit: <strong className={preview.totalProfit >= 0 ? "text-green-600" : "text-red-600"}>
-            {formatMoney(preview.totalProfit)}
-          </strong></div>
-          <div>Effective Rate: <strong>{formatNumber(preview.effectiveRate)}</strong></div>
-        </div>
-      </div>
-    );
+  function startEditRecord(record: RecordWithBalance) {
+    if (!editMode) {
+      openPinFor("record");
+      return;
+    }
+    if (record.status !== "pending") {
+      return;
+    }
+    setEditingRecordId(record.id);
+    setDraft({ amount: String(record.amount), rate: String(record.rate), note: record.note ?? "", comboMode: false, comboSelections: [] });
+    setRecordFormOpen(true);
   }
 
-  /* ========== main render ========== */
-  if (loadState === "idle" || loadState === "loading") {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <p className="text-gray-500">Loading…</p>
-      </div>
-    );
+  function resetRecordForm() {
+    setEditingRecordId(null);
+    setDraft(emptyRecordDraft);
+    setRecordFormOpen(false);
+  }
+
+  function addQuickAmount(value: number) {
+    setDraft((current) => ({
+      ...current,
+      amount: String(parseDraftNumber(current.amount) + value),
+    }));
+  }
+
+  function setRecentAmount(value: number) {
+    setDraft((current) => ({ ...current, amount: String(value) }));
+  }
+
+  async function toggleTrash() {
+    if (!selectedId) return;
+    const nextOpen = !trashOpen;
+    setTrashOpen(nextOpen);
+    if (nextOpen) {
+      await loadTrashRecords(selectedId);
+    }
+  }
+
+  function exportRecords() {
+    if (!selectedPlayer) return;
+    downloadCsv(`${fileSafeName(selectedPlayer.name)}-records.csv`, [recordExportHeader(), ...records.map((record) => recordExportRow(selectedPlayer, record))]);
+    setExportOpen(false);
+  }
+
+  function exportCurrentSession() {
+    if (!selectedPlayer) return;
+    downloadCsv(`${fileSafeName(selectedPlayer.name)}-current-session.csv`, [
+      ["Current Session"],
+      ["Player", selectedPlayer.name],
+      ["Total Amount", selectedPlayer.totalAmount],
+      ["Total Return", selectedPlayer.totalReturn],
+      ["Total Profit", selectedPlayer.totalProfit],
+      ["Balance", selectedPlayer.balance],
+      ["Finalized Records", selectedPlayer.finalizedRecordCount],
+      ["Pending Records", selectedPlayer.pendingRecordCount],
+      ["Win Count", selectedPlayer.winCount],
+      ["Loss Count", selectedPlayer.lossCount],
+      ["Draw Count", selectedPlayer.drawCount],
+      [],
+      recordExportHeader(),
+      ...records.map((record) => recordExportRow(selectedPlayer, record)),
+    ]);
+    setExportOpen(false);
+  }
+
+  async function exportAllData() {
+    setBusy(true);
+    setError("");
+    try {
+      const rows: CsvValue[][] = [recordExportHeader()];
+      for (const player of players) {
+        const data = await readJson<{ records: RecordWithBalance[] }>(await fetch(`/api/records?playerId=${player.id}`));
+        rows.splice(rows.length, 0, ...data.records.map((record) => recordExportRow(player, record)));
+      }
+      downloadCsv("game-tracker-all-data.csv", rows);
+      setExportOpen(false);
+    } catch (err) {
+      console.error("Unable to export data", err);
+      setError(err instanceof ApiError ? err.message : "Unable to export data. Please try again.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      {/* ===== Unlock Modal ===== */}
-      {pendingUnlock && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl p-6 w-80">
-            <h3 className="text-lg font-semibold mb-3">Enter Password</h3>
-            <input
-              type="password"
-              value={unlockKey}
-              onChange={(e) => setUnlockKey(e.target.value)}
-              className="w-full border border-gray-300 rounded px-3 py-2 mb-3"
-              autoFocus
-            />
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => { setPendingUnlock(null); setUnlockKey(""); }}
-                className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-100"
-              >Cancel</button>
-              <button
-                onClick={() => handleUnlock(pendingUnlock)}
-                className="px-3 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600"
-              >Unlock</button>
-            </div>
+    <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 px-4 py-5 text-ink transition-colors dark:text-slate-50 sm:px-6 lg:px-8">
+      <header className="rounded-[1.75rem] border border-emerald-400/10 bg-ink p-6 text-white shadow-soft dark:border-emerald-300/10 dark:bg-[#0f1815]">
+        <div className="flex flex-wrap items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium uppercase tracking-[0.3em] text-emerald-200">Game Tracker</p>
+            <h1 className="mt-3 text-3xl font-bold sm:text-5xl">Game Result Tracker</h1>
+          </div>
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+            <button
+              className="rounded-full bg-white/10 px-4 py-2 text-sm font-bold text-white transition hover:bg-white/15"
+              onClick={openSchedule}
+              type="button"
+            >
+              Schedule
+            </button>
+            <button
+              aria-pressed={darkMode}
+              className="rounded-full bg-white/10 px-4 py-2 text-sm font-bold text-white transition hover:bg-white/15"
+              onClick={() => setDarkMode((current) => !current)}
+              type="button"
+            >
+              {darkMode ? "Light Mode" : "Dark Mode"}
+            </button>
+            <span className={`rounded-full px-4 py-2 text-sm font-bold ${editMode ? "bg-emerald-300 text-ink" : "bg-white/15 text-white"}`}>
+              {editMode ? "Edit Mode" : "Viewer Mode"}
+            </span>
           </div>
         </div>
-      )}
-
-      {/* ===== Confirm Modal ===== */}
-      {confirming && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl p-6 w-[400px] max-w-full max-h-[90vh] overflow-y-auto">
-            <h3 className="text-lg font-semibold mb-3">Confirm Record</h3>
-
-            <div className="mb-3 text-sm">
-              <div>Player: <strong>{players.find(p => p.id === confirming.playerId)?.name}</strong></div>
-              <div>Amount: <strong>{formatMoney(confirming.amount)}</strong></div>
-              <div>Rate: <strong>{formatNumber(confirming.rate)}</strong></div>
-              {confirming.note && <div>Note: <em>{confirming.note}</em></div>}
-            </div>
-
-            {renderConfirmComboLegs() || (
-              <div className="mb-3">
-                <label className="block text-sm font-medium mb-1">Result</label>
-                <div className="flex flex-wrap gap-1">
-                  {resultOptions.map((opt) => (
-                    <button
-                      key={opt}
-                      type="button"
-                      onClick={() => setConfirmResult(opt)}
-                      className={`px-2 py-1 text-xs rounded border ${
-                        confirmResult === opt
-                          ? "bg-blue-500 text-white border-blue-500"
-                          : "border-gray-300 hover:bg-gray-100"
-                      }`}
-                    >
-                      {resultLabels[opt]}
-                    </button>
-                  ))}
-                </div>
-                {(() => {
-                  const amount = confirming.amount;
-                  const rate = confirming.rate;
-                  const expected = amount * rate;
-                  const result = outcomeToResultType(resultTypeToComboOutcome(confirmResult));
-                  let returnAmount = 0;
-                  switch (result) {
-                    case "win": returnAmount = expected; break;
-                    case "win_half": returnAmount = amount + (expected - amount) / 2; break;
-                    case "draw": returnAmount = amount; break;
-                    case "loss_half": returnAmount = amount / 2; break;
-                    case "loss": returnAmount = 0; break;
-                  }
-                  const profit = returnAmount - amount;
-                  return (
-                    <div className="mt-2 text-sm">
-                      Return: {formatMoney(returnAmount)} |{" "}
-                      Profit: <span className={profit >= 0 ? "text-green-600" : "text-red-600"}>
-                        {profit >= 0 ? "+" : ""}{formatMoney(profit)}
-                      </span>
-                    </div>
-                  );
-                })()}
-              </div>
-            )}
-
-            <div className="flex justify-end gap-2 mt-4">
-              <button
-                onClick={() => setConfirming(null)}
-                className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-100"
-              >Cancel</button>
-              <button
-                onClick={handleConfirm}
-                className="px-3 py-1 text-sm bg-green-500 text-white rounded hover:bg-green-600"
-              >Confirm</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ===== Delete Modal ===== */}
-      {pendingDelete && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl p-6 w-80">
-            <h3 className="text-lg font-semibold mb-3">Confirm Delete</h3>
-            {pendingDelete.type === "player" ? (
-              <p>Delete player <strong>{pendingDelete.player.name}</strong> and all their records?</p>
-            ) : (
-              <p>Delete this record (amount: {formatMoney(pendingDelete.record.amount)})?</p>
-            )}
-            <div className="flex justify-end gap-2 mt-4">
-              <button
-                onClick={() => setPendingDelete(null)}
-                className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-100"
-              >Cancel</button>
-              <button
-                onClick={() => {
-                  if (pendingDelete.type === "player") {
-                    handleDeletePlayer(pendingDelete.player.id);
-                  } else {
-                    handleDeleteRecord(pendingDelete.record.id);
-                  }
-                  setPendingDelete(null);
-                }}
-                className="px-3 py-1 text-sm bg-red-500 text-white rounded hover:bg-red-600"
-              >Delete</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div className="max-w-7xl mx-auto px-4 py-6">
-        {/* ===== Header ===== */}
-        <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-bold text-gray-800">Score Tracker</h1>
+        <p className="mt-3 max-w-2xl text-sm leading-6 text-emerald-50/80">
+          Track Amount, Rate, Return, Profit, and Balance for every player in one simple mobile-first dashboard.
+        </p>
+        {!editMode ? (
           <button
-            onClick={() => { loadPlayers(); loadRecords(); }}
-            className="text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300"
-          >Refresh</button>
-        </div>
+            className="mt-5 rounded-full bg-white px-5 py-3 text-sm font-bold text-ink shadow-sm active:scale-95"
+            onClick={() => openPinFor(null)}
+            type="button"
+          >
+            Enter Edit PIN
+          </button>
+        ) : null}
+      </header>
 
-        <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-6">
-          {/* ===== Left Column ===== */}
-          <div className="space-y-6">
-            {/* ----- Player List ----- */}
-            <div className="bg-white rounded-lg shadow p-4">
-              <h2 className="font-semibold text-gray-700 mb-3">Players</h2>
+      {error ? <StateBox tone="error" text={error} /> : null}
 
-              {/* Add Player */}
-              <form onSubmit={handleAddPlayer} className="flex gap-2 mb-3">
-                <input
-                  type="text"
-                  value={playerName}
-                  onChange={(e) => setPlayerName(e.target.value)}
-                  placeholder="Player name"
-                  className="flex-1 border border-gray-300 rounded px-2 py-1 text-sm"
-                />
-                <button
-                  type="submit"
-                  className="px-3 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600"
-                >Add</button>
-              </form>
+      <section className="grid gap-3 sm:grid-cols-5">
+        <Metric label="Total Amount" value={formatMoney(totalSummary.amount)} />
+        <Metric label="Total Return" value={formatMoney(totalSummary.valueReturn)} />
+        <Metric label="Total Profit" value={formatMoney(totalSummary.profit)} positive={totalSummary.profit >= 0} />
+        <Metric label="Finalized Records" value={formatNumber(totalSummary.finalizedCount)} />
+        <Metric label="Pending Records" value={formatNumber(totalSummary.pendingCount)} />
+      </section>
 
-              {/* Player List */}
-              <div className="space-y-1 max-h-96 overflow-y-auto">
-                <button
-                  onClick={() => setPlayerFilter("")}
-                  className={`w-full text-left px-2 py-1 text-sm rounded ${
-                    !playerFilter ? "bg-blue-100 font-semibold" : "hover:bg-gray-100"
-                  }`}
-                >All Players</button>
-                {playerTotals.map((p) => (
-                  <div
-                    key={p.id}
-                    className={`flex items-center justify-between px-2 py-1 text-sm rounded ${
-                      playerFilter === p.id ? "bg-blue-100 font-semibold" : "hover:bg-gray-100"
-                    }`}
-                  >
-                    <button
-                      onClick={() => setPlayerFilter(p.id)}
-                      className="flex-1 text-left"
-                    >
-                      {p.name}
-                      <span className="text-xs text-gray-500 ml-1">
-                        ({p.totalProfit > 0 ? "+" : ""}{p.totalProfit})
-                      </span>
-                    </button>
-                    <button
-                      onClick={() => confirmDeletePlayer(p)}
-                      className="text-red-400 hover:text-red-600 text-xs ml-2"
-                    >✕</button>
-                  </div>
-                ))}
-              </div>
+      <section className="grid gap-5 lg:grid-cols-[0.95fr_1.35fr]">
+        <div className="rounded-[1.5rem] border border-white/80 bg-white/95 p-4 shadow-soft dark:border-white/10 dark:bg-[#121d19]/95">
+          <div className="mb-4 flex items-center gap-3">
+            <div>
+              <h2 className="text-xl font-bold">Players</h2>
+              <p className="text-sm text-slate-500 dark:text-slate-400">Add players by name.</p>
             </div>
+            {loadState === "loading" ? <span className="ml-auto text-sm text-slate-500 dark:text-slate-400">Loading...</span> : null}
+          </div>
 
-            {/* ----- Create Record ----- */}
-            <div className="bg-white rounded-lg shadow p-4">
-              <h2 className="font-semibold text-gray-700 mb-3">New Record</h2>
+          <button
+            className="mb-4 w-full rounded-2xl bg-emerald-600 px-4 py-3 font-bold text-white active:scale-95"
+            onClick={() => requestEdit(() => setAddPlayerOpen(true), "player")}
+            type="button"
+          >
+            Add Player
+          </button>
 
-              <form onSubmit={handleCreateRecord} className="space-y-3">
-                {/* Player selector when no filter */}
-                {!playerFilter && (
-                  <p className="text-xs text-orange-500">Select a player from the list above first.</p>
-                )}
+          {addPlayerOpen && editMode ? (
+            <form className="mb-5 flex gap-2 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5" onSubmit={createPlayer}>
+              <input
+                className="min-h-12 flex-1 rounded-2xl border border-slate-200 bg-white px-4 outline-none focus:border-emerald-500 dark:border-white/10 dark:bg-[#0d1512]"
+                onChange={(event) => setPlayerName(event.target.value)}
+                placeholder="Player name"
+                value={playerName}
+              />
+              <button className="rounded-2xl bg-ink px-4 font-bold text-white active:scale-95" disabled={busy} type="submit">
+                Save
+              </button>
+              <button className="rounded-2xl bg-slate-100 px-4 font-bold dark:bg-white/10" onClick={() => setAddPlayerOpen(false)} type="button">
+                Cancel
+              </button>
+            </form>
+          ) : null}
 
-                {playerFilter && (
-                  <>
-                    {/* Combo Mode Toggle */}
-                    <div className="flex items-center gap-2">
-                      <label className="flex items-center gap-2 text-sm">
+          {loadState === "error" && !error ? <StateBox tone="error" text="Unable to load data. Please try again." /> : null}
+          {loadState !== "loading" && players.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-emerald-300 bg-mint p-6 text-center dark:border-emerald-400/40 dark:bg-emerald-400/10">
+              <p className="text-lg font-bold">No players yet</p>
+              <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Add your first player to start tracking game results.</p>
+              <button
+                className="mt-4 rounded-full bg-ink px-5 py-3 text-sm font-bold text-white"
+                onClick={() => requestEdit(() => setAddPlayerOpen(true), "player")}
+                type="button"
+              >
+                Add First Player
+              </button>
+            </div>
+          ) : null}
+
+          <div className="flex flex-col gap-4">
+            {players.map((player) => (
+              <article
+                className={`rounded-2xl border p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
+                  selectedId === player.id
+                    ? "border-emerald-500 bg-emerald-50/90 dark:border-emerald-400 dark:bg-emerald-400/10"
+                    : "border-slate-200/80 bg-white dark:border-white/10 dark:bg-white/[0.03]"
+                }`}
+                key={player.id}
+              >
+                <button className="w-full text-left" onClick={() => { setSelectedId(player.id); setMobileDetailOpen(true); }} type="button">
+                  <div className="flex items-start gap-3">
+                    <div>
+                      {renamingId === player.id ? (
                         <input
-                          type="checkbox"
-                          checked={recordDraft.comboMode}
-                          onChange={(e) =>
-                            setRecordDraft((prev) => ({
-                              ...emptyRecordDraft,
-                              comboMode: e.target.checked,
-                              comboLegs: e.target.checked ? [{ amount: "", rate: "" }] : [],
-                              amount: "",
-                              rate: "",
-                              note: prev.note,
-                            }))
-                          }
-                          className="rounded"
+                          className="w-full rounded-xl border border-slate-200 px-3 py-2 font-bold dark:border-white/10 dark:bg-[#0d1512]"
+                          onChange={(event) => setRenameValue(event.target.value)}
+                          value={renameValue}
                         />
-                        Combo
-                      </label>
+                      ) : (
+                        <h3 className="text-lg font-bold">{player.name}</h3>
+                      )}
+                      <p className="text-sm text-slate-500 dark:text-slate-400">
+                        {player.finalizedRecordCount} finalized, {player.pendingRecordCount} pending, {player.trashedRecordCount} trash
+                      </p>
                     </div>
-
-                    {recordDraft.comboMode ? (
+                    <div className="ml-auto"><ProfitBadge value={player.balance} /></div>
+                  </div>
+                </button>
+                <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
+                  <MiniMetric label="Amount" value={formatMoney(player.totalAmount)} />
+                  <MiniMetric label="Return" value={formatMoney(player.totalReturn)} />
+                  <MiniMetric label="Profit" value={formatMoney(player.totalProfit)} />
+                  <MiniMetric label="Balance" value={formatMoney(player.balance)} />
+                </div>
+                {editMode ? (
+                  <div className="mt-4 flex gap-2">
+                    {renamingId === player.id ? (
                       <>
-                        {renderComboLegForm()}
-
-                        <div>
-                          <input
-                            type="text"
-                            value={recordDraft.note}
-                            onChange={(e) => setRecordDraft((prev) => ({ ...prev, note: e.target.value }))}
-                            placeholder="Note (optional)"
-                            className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
-                          />
-                        </div>
-
-                        <button
-                          type="submit"
-                          disabled={recordDraft.comboLegs.length === 0}
-                          className="w-full py-2 bg-yellow-500 text-white rounded hover:bg-yellow-600 disabled:opacity-50 text-sm font-semibold"
-                        >
-                          Create Combo ({getTotalStake() > 0 ? formatMoney(getTotalStake()) : "?"})
+                        <button className="flex-1 rounded-2xl bg-ink py-2 text-sm font-bold text-white" onClick={() => saveRename(player.id)} type="button">
+                          Save
+                        </button>
+                        <button className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold dark:bg-white/10" onClick={() => setRenamingId(null)} type="button">
+                          Cancel
                         </button>
                       </>
                     ) : (
                       <>
-                        {/* Amount with quick increments */}
-                        <div>
-                          <label className="block text-xs text-gray-600 mb-1">Amount</label>
-                          <input
-                            type="number"
-                            step="any"
-                            min="0"
-                            value={recordDraft.amount}
-                            onChange={(e) => setRecordDraft((prev) => ({ ...prev, amount: e.target.value }))}
-                            className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
-                          />
-                          <div className="flex gap-1 mt-1">
-                            {quickAmountIncrements.map((inc) => (
-                              <button
-                                key={inc}
-                                type="button"
-                                onClick={() => setRecordDraft((prev) => ({ ...prev, amount: String(inc) }))}
-                                className="text-xs px-2 py-0.5 bg-gray-100 rounded hover:bg-gray-200"
-                              >{formatMoney(inc)}</button>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Rate */}
-                        <div>
-                          <label className="block text-xs text-gray-600 mb-1">Rate</label>
-                          <input
-                            type="number"
-                            step="any"
-                            min="0"
-                            value={recordDraft.rate}
-                            onChange={(e) => setRecordDraft((prev) => ({ ...prev, rate: e.target.value }))}
-                            className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
-                          />
-                        </div>
-
-                        {/* Preview */}
-                        {parseDraftNumber(recordDraft.amount) > 0 && parseDraftNumber(recordDraft.rate) > 0 && (
-                          <div className="text-xs text-gray-500">
-                            Expected return: {formatMoney(getExpectedReturn(
-                              parseDraftNumber(recordDraft.amount),
-                              parseDraftNumber(recordDraft.rate)
-                            ))}
-                          </div>
-                        )}
-
-                        <div>
-                          <input
-                            type="text"
-                            value={recordDraft.note}
-                            onChange={(e) => setRecordDraft((prev) => ({ ...prev, note: e.target.value }))}
-                            placeholder="Note (optional)"
-                            className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
-                          />
-                        </div>
-
                         <button
-                          type="submit"
-                          className="w-full py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm font-semibold"
+                          className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold dark:bg-white/10"
+                          onClick={() => {
+                            setRenamingId(player.id);
+                            setRenameValue(player.name);
+                          }}
+                          type="button"
                         >
-                          Create
+                          Edit Player
+                        </button>
+                        <button className="flex-1 rounded-2xl bg-rose-50 py-2 text-sm font-bold text-rose-700 dark:bg-rose-400/10 dark:text-rose-200" onClick={() => removePlayer(player)} type="button">
+                          Delete Player
                         </button>
                       </>
                     )}
-                  </>
-                )}
-              </form>
-            </div>
-          </div>
-
-          {/* ===== Right Column ===== */}
-          <div className="space-y-4">
-            {/* ----- Filters ----- */}
-            <div className="bg-white rounded-lg shadow p-3 flex items-center gap-4">
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={showFinalized}
-                  onChange={(e) => setShowFinalized(e.target.checked)}
-                />
-                Show finalized
-              </label>
-
-              {recordsLoadState === "loading" && (
-                <span className="text-xs text-gray-500">Loading records…</span>
-              )}
-              {recordsLoadState === "error" && (
-                <button
-                  onClick={loadRecords}
-                  className="text-xs px-2 py-1 bg-red-100 text-red-600 rounded hover:bg-red-200"
-                >Retry loading records</button>
-              )}
-
-              <div className="flex-1" />
-
-              {playerFilter && (
-                <button
-                  onClick={() => {
-                    // CSV export
-                    const selectedPlayer = players.find(p => p.id === playerFilter);
-                    if (!selectedPlayer) return;
-                    const playerRecords = filteredRecords.filter(r => r.status === "finalized");
-                    if (playerRecords.length === 0) return;
-                    const rows = [recordExportHeader()];
-                    playerRecords.forEach((r) => rows.push(recordExportRow(selectedPlayer, r)));
-                    downloadCsv(`${fileSafeName(selectedPlayer.name)}-records.csv`, rows);
-                  }}
-                  className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded hover:bg-green-200"
-                >CSV</button>
-              )}
-            </div>
-
-            {/* ----- Records Table ----- */}
-            <div className="bg-white rounded-lg shadow overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-gray-50 text-gray-600 text-xs uppercase">
-                    <th className="px-3 py-2 text-left">Player</th>
-                    <th className="px-3 py-2 text-left">Amount</th>
-                    <th className="px-3 py-2 text-left">Rate</th>
-                    <th className="px-3 py-2 text-left">Status</th>
-                    <th className="px-3 py-2 text-left">Return</th>
-                    <th className="px-3 py-2 text-left">Profit</th>
-                    <th className="px-3 py-2 text-left">Balance</th>
-                    <th className="px-3 py-2 text-left">Date</th>
-                    <th className="px-3 py-2 w-20"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredRecords.length === 0 && (
-                    <tr>
-                      <td colSpan={9} className="px-3 py-8 text-center text-gray-400">
-                        {recordsLoadState === "loading" ? "Loading records..." : "No records yet."}
-                      </td>
-                    </tr>
-                  )}
-
-                  {filteredRecords.map((record) => {
-                    const player = players.find((p) => p.id === record.playerId);
-                    const isCombo = record.comboLegs && record.comboLegs.length > 0;
-
-                    return (
-                      <tr key={record.id} className="border-t border-gray-100 hover:bg-gray-50">
-                        <td className="px-3 py-2">{player?.name ?? "?"}</td>
-                        <td className="px-3 py-2">{formatMoney(record.amount)}</td>
-                        <td className="px-3 py-2">{formatNumber(record.rate)}</td>
-                        <td className="px-3 py-2">
-                          {record.status === "pending" ? (
-                            <span className="text-yellow-600 text-xs font-semibold">Pending</span>
-                          ) : (
-                            <span className="text-xs text-gray-600">{record.resultType ?? "?"}</span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2">
-                          {record.status === "finalized" ? formatMoney(record.returnAmount) : "-"}
-                        </td>
-                        <td className={`px-3 py-2 ${
-                          record.status === "finalized"
-                            ? record.profit >= 0 ? "text-green-600" : "text-red-600"
-                            : ""
-                        }`}>
-                          {record.status === "finalized"
-                            ? (record.profit >= 0 ? "+" : "") + formatMoney(record.profit)
-                            : "-"
-                          }
-                        </td>
-                        <td className="px-3 py-2">
-                          {record.balance !== null ? formatMoney(record.balance) : "-"}
-                        </td>
-                        <td className="px-3 py-2 text-xs text-gray-400">{record.createdAt}</td>
-                        <td className="px-3 py-2">
-                          {record.status === "pending" ? (
-                            <button
-                              onClick={() => openConfirm(record)}
-                              className="text-xs px-2 py-1 bg-green-100 text-green-600 rounded hover:bg-green-200"
-                            >✓</button>
-                          ) : (
-                            <button
-                              onClick={() => confirmDeleteRecord(record)}
-                              className="text-xs px-2 py-1 bg-red-100 text-red-600 rounded hover:bg-red-200"
-                            >✕</button>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            {/* ----- World Cup Schedule ----- */}
-            <div className="bg-white rounded-lg shadow p-4">
-              <h2 className="font-semibold text-gray-700 mb-3">World Cup Schedule</h2>
-              {scheduleLoadState === "loading" && <p className="text-xs text-gray-500">Loading schedule…</p>}
-              {scheduleLoadState === "error" && (
-                <div className="flex items-center gap-2">
-                  <p className="text-xs text-red-500">Failed to load schedule.</p>
-                  <button
-                    onClick={loadSchedule}
-                    className="text-xs px-2 py-1 bg-red-100 text-red-600 rounded"
-                  >Retry</button>
-                </div>
-              )}
-              {scheduleLoadState === "ready" && (
-                <div className="space-y-1 max-h-96 overflow-y-auto">
-                  {/* Group by day */}
-                  {Object.entries(
-                    schedule.reduce<Record<string, WorldCupMatch[]>>((acc, match) => {
-                      const day = (match.kickoffAt ?? "").slice(0, 10);
-                      if (!acc[day]) acc[day] = [];
-                      acc[day].push(match);
-                      return acc;
-                    }, {})
-                  ).map(([day, dayMatches]) => day && (
-                    <div key={day}>
-                      <div className="text-xs font-semibold text-gray-500 mt-2 mb-1">{formatScheduleDay(day)}</div>
-                      {dayMatches.map((match) => (
-                        <div key={match.id} className="text-xs py-1 border-b border-gray-50 last:border-0">
-                          <div className="flex items-center justify-between">
-                            <span className={match.status === "finished" ? "text-gray-400" : ""}>
-                              {match.homeTeam} vs {match.awayTeam}
-                            </span>
-                            <span className="text-gray-400">{formatScheduleDate(match.kickoffAt ?? "")}</span>
-                          </div>
-                          {match.status === "finished" && (
-                            <div className="text-gray-500">
-                              {match.homeScore} - {match.awayScore}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+                  </div>
+                ) : null}
+              </article>
+            ))}
           </div>
         </div>
+
+        <div className="hidden rounded-[1.5rem] border border-white/80 bg-white/95 p-4 shadow-soft dark:border-white/10 dark:bg-[#121d19]/95 lg:block">
+          {selectedPlayer ? (
+            <>
+              <div className="mb-4 flex items-start gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">Player detail</p>
+                  <h2 className="text-2xl font-bold">{selectedPlayer.name}</h2>
+                </div>
+                {recordState === "loading" ? <span className="ml-auto text-sm text-slate-500 dark:text-slate-400">Loading...</span> : null}
+              </div>
+
+              <section className="mb-4 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <h3 className="font-bold">Player Summary</h3>
+                  <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200">Live</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <SummaryTile accent="emerald" icon="$" label="Current Balance" value={formatMoney(selectedPlayer.balance)} />
+                  <SummaryTile accent="slate" icon="A" label="Total Amount" value={formatMoney(selectedPlayer.totalAmount)} />
+                  <SummaryTile accent="sky" icon="R" label="Total Return" value={formatMoney(selectedPlayer.totalReturn)} />
+                  <SummaryTile accent={selectedPlayer.totalProfit < 0 ? "rose" : "emerald"} icon="P" label="Total Profit" value={formatMoney(selectedPlayer.totalProfit)} />
+                  <SummaryTile accent="emerald" icon="W" label="Win Count" value={formatNumber(selectedPlayer.winCount)} />
+                  <SummaryTile accent="rose" icon="L" label="Loss Count" value={formatNumber(selectedPlayer.lossCount)} />
+                  <SummaryTile accent="amber" icon="D" label="Draw Count" value={formatNumber(selectedPlayer.drawCount)} />
+                  <SummaryTile accent="amber" icon="P" label="Pending Count" value={formatNumber(selectedPlayer.pendingRecordCount)} />
+                </div>
+              </section>
+
+              <button
+                className="mb-4 w-full rounded-2xl bg-emerald-600 py-3 font-bold text-white active:scale-95"
+                onClick={() => requestEdit(() => setRecordFormOpen(true), "record")}
+                type="button"
+              >
+                Add Record
+              </button>
+
+              <div className="mb-4 grid gap-2 sm:grid-cols-3">
+                <button
+                  className="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold text-ink active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-50"
+                  onClick={toggleTrash}
+                  type="button"
+                >
+                  Trash ({selectedPlayer.trashedRecordCount})
+                </button>
+                <button
+                  className="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold text-ink active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-50"
+                  onClick={() => setFinalizedOpen(true)}
+                  type="button"
+                >
+                  Finalized ({finalizedRecords.length})
+                </button>
+                <button
+                  className="rounded-2xl bg-slate-100 px-3 py-3 text-sm font-bold active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white/10"
+                  disabled={players.length === 0 || busy}
+                  onClick={() => setExportOpen(true)}
+                  type="button"
+                >
+                  Export
+                </button>
+              </div>
+
+              {recordFormOpen && editMode ? (
+                <form className="rounded-2xl border border-slate-100 bg-slate-50 p-4 dark:border-white/10 dark:bg-white/[0.04]" onSubmit={(event) => event.preventDefault()}>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Field label="Amount">
+                      <input
+                        className="input"
+                        inputMode="decimal"
+                        min="0"
+                        onChange={(event) => setDraft((current) => ({ ...current, amount: event.target.value }))}
+                        placeholder="100000"
+                        step="any"
+                        type="number"
+                        value={draft.amount}
+                      />
+                    </Field>
+                    <div className="rounded-2xl border border-slate-100 bg-white p-3 dark:border-white/10 dark:bg-white/[0.04] sm:col-span-2">
+                      <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Quick Add Amount</p>
+                      <div className="mt-3 grid grid-cols-5 gap-2">
+                        {quickAmountIncrements.map((amount) => (
+                          <button
+                            className="rounded-xl bg-slate-100 py-2 text-sm font-bold text-ink active:scale-95 dark:bg-white/10 dark:text-slate-50"
+                            key={amount}
+                            onClick={() => addQuickAmount(amount)}
+                            type="button"
+                          >
+                            +{amount}
+                          </button>
+                        ))}
+                      </div>
+                      {recentAmounts.length > 0 ? (
+                        <>
+                          <p className="mt-4 text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Recently Used</p>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {recentAmounts.map((amount) => (
+                              <button
+                                className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-800 active:scale-95 dark:border-emerald-400/20 dark:bg-emerald-400/10 dark:text-emerald-200"
+                                key={amount}
+                                onClick={() => setRecentAmount(amount)}
+                                type="button"
+                              >
+                                {formatMoney(amount)}
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      ) : null}
+                    </div>
+                    {draft.comboMode ? (
+                      <div className="rounded-2xl border border-slate-100 bg-white p-3 dark:border-white/10 dark:bg-white/[0.04] sm:col-span-2">
+                        <div className="mb-2 flex items-center justify-between">
+                          <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Combo Selections</p>
+                          <button
+                            className="rounded-xl bg-rose-100 px-2 py-1 text-xs font-bold text-rose-700 active:scale-95 dark:bg-rose-400/20 dark:text-rose-200"
+                            onClick={() => setDraft((current) => ({ ...current, comboMode: false, comboSelections: [] }))}
+                            type="button"
+                          >
+                            Disable Combo
+                          </button>
+                        </div>
+                        {draft.comboSelections.map((sel, idx) => (
+                          <div className="mb-2 grid grid-cols-[1fr_auto_auto] gap-2" key={idx}>
+                            <input
+                              className="input"
+                              inputMode="decimal"
+                              min="0"
+                              onChange={(event) => {
+                                const val = parseDraftNumber(event.target.value);
+                                const updated = [...draft.comboSelections];
+                                updated[idx] = { ...updated[idx], originalRate: val > 0 ? val : 0 };
+                                setDraft((current) => ({ ...current, comboSelections: updated }));
+                              }}
+                              placeholder="Rate"
+                              step="any"
+                              type="number"
+                              value={sel.originalRate || ""}
+                            />
+                            <div className="flex gap-1 rounded-2xl bg-slate-100 p-1 dark:bg-white/10">
+                              {comboOutcomeOptions.map((outcome) => (
+                                <button
+                                  className={`rounded-xl px-2 py-1 text-xs font-bold transition active:scale-95 ${sel.outcome === outcome ? "bg-white text-ink shadow-sm dark:bg-[#121d19] dark:text-slate-50" : "text-slate-600 hover:text-ink dark:text-slate-400 dark:hover:text-slate-200"}`}
+                                  key={outcome}
+                                  onClick={() => {
+                                    const updated = [...draft.comboSelections];
+                                    updated[idx] = { ...updated[idx], outcome };
+                                    setDraft((current) => ({ ...current, comboSelections: updated }));
+                                  }}
+                                  type="button"
+                                >
+                                  {comboOutcomeLabels[outcome]}
+                                </button>
+                              ))}
+                            </div>
+                            <button
+                              className="rounded-xl bg-rose-50 px-2 text-sm font-bold text-rose-700 active:scale-95 dark:bg-rose-400/10 dark:text-rose-200"
+                              onClick={() => {
+                                const updated = draft.comboSelections.filter((_, i) => i !== idx);
+                                setDraft((current) => ({ ...current, comboSelections: updated }));
+                              }}
+                              type="button"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ))}
+                        <button
+                          className="w-full rounded-xl border border-dashed border-slate-300 py-2 text-sm font-bold text-slate-500 active:scale-95 dark:border-white/20 dark:text-slate-400"
+                          onClick={() => setDraft((current) => ({ ...current, comboSelections: [...current.comboSelections, { originalRate: 0, outcome: "WIN" }] }))}
+                          type="button"
+                        >
+                          + Add Selection
+                        </button>
+                        {draftComboResult && draft.comboSelections.length > 0 ? (
+                          <div className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50 p-3 text-sm dark:border-emerald-400/20 dark:bg-emerald-400/10">
+                            <p className="text-xs font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Combo Breakdown</p>
+                            <div className="mt-1 space-y-1">
+                              {draftComboResult.currentRates.map((rate, i) => (
+                                <p key={i} className="text-emerald-800 dark:text-emerald-200">
+                                  Leg {i + 1}: {comboOutcomeLabels[draft.comboSelections[i]?.outcome] ?? "?"} → {rate.toFixed(4)}
+                                </p>
+                              ))}
+                              <p className="font-bold text-emerald-900 dark:text-emerald-100">Final Rate: {draftComboResult.finalRate.toFixed(4)}</p>
+                              <p className="font-bold text-emerald-900 dark:text-emerald-100">Net Profit: {formatMoney(draftComboResult.netProfit)}</p>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <Field label="Rate">
+                        <input
+                          className="input"
+                          inputMode="decimal"
+                          min="0"
+                          onChange={(event) => setDraft((current) => ({ ...current, rate: event.target.value }))}
+                          placeholder="1.95"
+                          step="any"
+                          type="number"
+                          value={draft.rate}
+                        />
+                      </Field>
+                    )}
+                    <div className="flex items-start gap-2 sm:col-span-2">
+                      <div className="flex-1">
+                        <Field label="Note">
+                          <textarea
+                            className="input min-h-24 resize-none"
+                            onChange={(event) => setDraft((current) => ({ ...current, note: event.target.value }))}
+                            placeholder="Optional note"
+                            value={draft.note}
+                          />
+                        </Field>
+                      </div>
+                      <button
+                        className={`mt-6 whitespace-nowrap rounded-2xl px-4 py-3 text-sm font-bold active:scale-95 ${draft.comboMode ? "bg-emerald-600 text-white" : "border border-slate-200 bg-white text-ink dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-50"}`}
+                        onClick={() => setDraft((current) => ({ ...current, comboMode: !current.comboMode, comboSelections: current.comboMode ? [] : current.comboSelections }))}
+                        type="button"
+                      >
+                        {draft.comboMode ? "Combo ✓" : "Combo"}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-4 rounded-2xl border border-emerald-100 bg-white p-4 dark:border-emerald-400/20 dark:bg-white/[0.04]">
+                    <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                      {draft.comboMode ? "Total Expected Return" : "Expected Return"}
+                    </p>
+                    <p className="mt-1 text-xl font-bold text-ink dark:text-slate-50">{formatMoney(draftExpectedReturn)}</p>
+                  </div>
+                  <div className="mt-4 flex gap-2">
+                    <button className="flex-1 rounded-2xl bg-emerald-600 py-3 font-bold text-white active:scale-95" disabled={busy} onClick={saveRecord} type="button">
+                      Save Record
+                    </button>
+                    <button className="rounded-2xl bg-slate-200 px-4 font-bold dark:bg-white/10" onClick={resetRecordForm} type="button">
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+
+              {recordError ? <StateBox tone="error" text={recordError} /> : null}
+              {recordState !== "loading" && records.length === 0 ? <StateBox tone="empty" text="No records yet. Add the first record for this player." /> : null}
+
+              <p className="mt-3 text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                Pending Records ({pendingRecords.length})
+              </p>
+              <div className="mt-2 flex flex-col gap-3">
+                {pendingRecords.map((record) => {
+                  const expectedReturn = getExpectedReturn(record.amount, record.rate);
+                  const isExpanded = expandedRecordId === record.id || confirmingRecordId === record.id;
+                  const summaryLabel = record.status === "pending" ? "Expected Return" : "Profit";
+                  const summaryValue = record.status === "pending" ? expectedReturn : record.profit;
+
+                  return (
+                  <article className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-white/[0.03]" key={record.id}>
+                    <button
+                      aria-expanded={isExpanded}
+                      className="w-full text-left"
+                      onClick={() => setExpandedRecordId((current) => (current === record.id ? null : record.id))}
+                      type="button"
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm text-slate-500 dark:text-slate-400">{formatDate(record.createdAt)}</p>
+                          <p className="mt-1 text-sm font-bold text-emerald-700 dark:text-emerald-300">
+                            {record.status === "pending" ? "Result Pending" : "Result Confirmed"}
+                          </p>
+                        </div>
+                        <StatusBadge status={record.status} />
+                      </div>
+                      <div className="mt-4 flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
+                        <div>
+                          <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">{summaryLabel}</p>
+                          <p className={`mt-1 text-lg font-bold ${summaryValue < 0 ? "text-rose-700 dark:text-rose-300" : "text-ink dark:text-slate-50"}`}>
+                            {formatMoney(summaryValue)}
+                          </p>
+                        </div>
+                        <span className="text-sm font-bold text-slate-500 dark:text-slate-400">{isExpanded ? "Hide Details" : "View Details"}</span>
+                      </div>
+                    </button>
+                    {isExpanded ? (
+                      <>
+                    <div className="mt-4">
+                      {record.note ? <p className="font-medium">{record.note}</p> : <p className="text-sm text-slate-400 dark:text-slate-500">No note</p>}
+                    </div>
+                    <div className="mt-5 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+                      <MiniMetric label="Amount" value={formatMoney(record.amount)} />
+                      <MiniMetric label="Rate" value={formatNumber(record.rate)} />
+                      <MiniMetric label="Status" value={record.status === "pending" ? "Pending" : "Finalized"} />
+                      <MiniMetric label="Result" value={record.resultType ? resultLabels[record.resultType] : "Pending"} />
+                      <MiniMetric label={record.status === "pending" ? "Expected Return" : "Return"} value={record.status === "pending" ? formatMoney(expectedReturn) : formatMoney(record.returnAmount)} />
+                      <MiniMetric label="Profit" value={record.status === "pending" ? "-" : formatMoney(record.profit)} />
+                      <MiniMetric label="Balance" value={record.balance === null ? "-" : formatMoney(record.balance)} />
+                    </div>
+                    {record.status === "pending" ? (
+                      <div className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
+                        {confirmingRecordId === record.id ? (
+                          <div className="flex flex-col gap-4">
+                            <div>
+                              <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">Select Result</p>
+                              <div className="flex flex-wrap gap-1 rounded-2xl bg-slate-100 p-1 dark:bg-white/10">
+                                {resultOptions.map((resultType) => {
+                                  const isActive = selectedResultType === resultType;
+                                  return (
+                                    <button
+                                      className={`flex-1 rounded-xl py-2 px-1 text-center text-xs font-bold transition active:scale-95 whitespace-nowrap ${
+                                        isActive
+                                          ? "bg-white text-ink shadow-sm dark:bg-[#121d19] dark:text-slate-50"
+                                          : "text-slate-600 hover:text-ink dark:text-slate-400 dark:hover:text-slate-200"
+                                      }`}
+                                      key={resultType}
+                                      onClick={() => setSelectedResultType(resultType)}
+                                      type="button"
+                                    >
+                                      {resultLabels[resultType]}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                className="flex-1 rounded-2xl bg-emerald-600 py-3 font-bold text-white active:scale-95"
+                                disabled={busy}
+                                onClick={() => confirmRecord(record.id, selectedResultType)}
+                                type="button"
+                              >
+                                Confirm
+                              </button>
+                              <button
+                                className="rounded-2xl bg-slate-200 px-4 py-3 font-bold dark:bg-white/10"
+                                onClick={() => setConfirmingRecordId(null)}
+                                type="button"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            className="w-full rounded-2xl bg-ink py-3 text-sm font-bold text-white"
+                            onClick={() => {
+                              if (!editMode) {
+                                setPendingConfirmRecordId(record.id);
+                                openPinFor("confirm");
+                                return;
+                              }
+                              setConfirmingRecordId(record.id);
+                              setExpandedRecordId(record.id);
+                              setSelectedResultType("win");
+                            }}
+                            type="button"
+                          >
+                            Confirm Result
+                          </button>
+                        )}
+                      </div>
+                    ) : null}
+                    {editMode ? (
+                      <div className="mt-4 flex gap-2">
+                        {record.status === "pending" ? (
+                          <button className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold dark:bg-white/10" onClick={() => startEditRecord(record)} type="button">
+                            Edit Record
+                          </button>
+                        ) : null}
+                        <button className="flex-1 rounded-2xl bg-rose-50 py-2 text-sm font-bold text-rose-700 dark:bg-rose-400/10 dark:text-rose-200" onClick={() => removeRecord(record)} type="button">
+                          Move to Trash
+                        </button>
+                      </div>
+                    ) : null}
+                      </>
+                    ) : null}
+                  </article>
+                  );
+                })}
+              </div>
+            </>
+          ) : (
+            <StateBox tone="empty" text="Choose or add a player to view details." />
+          )}
+        </div>
+      </section>
+
+      {pinOpen ? (
+        <div className="fixed inset-0 z-50 flex items-end bg-ink/60 p-4 backdrop-blur-sm sm:items-center sm:justify-center">
+          <form className="w-full rounded-[1.5rem] border border-white/80 bg-white p-5 shadow-soft dark:border-emerald-400/20 dark:bg-[#17231f] sm:max-w-sm" onSubmit={verifyPin}>
+            <h2 className="text-xl font-bold">Enter Edit PIN</h2>
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Enter the edit PIN to make changes.</p>
+            <input
+              className="mt-4 min-h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-ink outline-none focus:border-emerald-500 dark:border-emerald-400/30 dark:bg-[#0d1512] dark:text-slate-50 dark:placeholder:text-slate-500"
+              onChange={(event) => setPin(event.target.value)}
+              placeholder="PIN"
+              type="password"
+              value={pin}
+            />
+            {pinError ? <p className="mt-2 text-sm font-semibold text-rose-700">{pinError}</p> : null}
+            <div className="mt-4 flex gap-2">
+              <button className="rounded-2xl bg-slate-100 px-4 font-bold text-ink dark:bg-slate-700 dark:text-slate-50" onClick={() => setPinOpen(false)} type="button">
+                Cancel
+              </button>
+              <button className="flex-1 rounded-2xl bg-emerald-600 py-3 font-bold text-white shadow-sm active:scale-95 disabled:opacity-60 dark:bg-emerald-500 dark:text-ink" disabled={busy} type="submit">
+                Unlock Edit Mode
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
+      {exportOpen ? (
+        <ExportDialog
+          busy={busy}
+          canExportRecords={records.length > 0}
+          onCancel={() => setExportOpen(false)}
+          onExportAllData={exportAllData}
+          onExportCurrentSession={exportCurrentSession}
+          onExportRecords={exportRecords}
+        />
+      ) : null}
+
+      {scheduleOpen ? (
+        <ScheduleDialog
+          error={scheduleError}
+          lastSyncedAt={scheduleSyncedAt}
+          loading={scheduleState === "loading" || isBackgroundSyncing}
+          matches={scheduleMatches}
+          onCancel={() => setScheduleOpen(false)}
+          onSync={() => { void syncWorldCupMatches(false); }}
+        />
+      ) : null}
+
+      {trashOpen ? (
+        <TrashDialog
+          loading={trashState === "loading"}
+          onCancel={() => setTrashOpen(false)}
+          records={trashRecords}
+        />
+      ) : null}
+
+      {finalizedOpen ? (
+        <FinalizedRecordsDialog
+          onCancel={() => setFinalizedOpen(false)}
+          records={finalizedRecords}
+        />
+      ) : null}
+
+      {pendingDelete ? (
+        <ConfirmDialog
+          busy={busy}
+          body={
+            pendingDelete.type === "player"
+              ? `This will delete ${pendingDelete.player.name} and all records for this player.`
+              : "This will move this record out of the active history and into this player's trash."
+          }
+          confirmLabel={pendingDelete.type === "player" ? "Delete Player" : "Move to Trash"}
+          reason={pendingDelete.type === "record" ? deleteReason : undefined}
+          reasonError={pendingDelete.type === "record" ? deleteReasonError : undefined}
+          onCancel={() => {
+            setPendingDelete(null);
+            setDeleteReason("");
+            setDeleteReasonError("");
+          }}
+          onConfirm={confirmDelete}
+          onReasonChange={(value) => {
+            setDeleteReason(value);
+            if (value.trim()) {
+              setDeleteReasonError("");
+            }
+          }}
+          title={pendingDelete.type === "player" ? "Delete Player?" : "Move Record to Trash?"}
+        />
+      ) : null}
+
+      {selectedPlayer && mobileDetailOpen ? (
+        <div className="fixed inset-0 z-40 flex items-end bg-ink/60 backdrop-blur-sm sm:hidden" onClick={() => setMobileDetailOpen(false)}>
+          <section
+            className="w-full max-h-[85vh] overflow-hidden rounded-t-[1.5rem] border border-white/80 bg-white shadow-soft dark:border-white/10 dark:bg-[#121d19]"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-white/80 bg-white/95 p-4 dark:border-white/10 dark:bg-[#121d19]/95">
+              <div>
+                <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">Player detail</p>
+                <h2 className="text-xl font-bold">{selectedPlayer.name}</h2>
+              </div>
+              <button className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-bold text-ink dark:bg-slate-700 dark:text-slate-50" onClick={() => setMobileDetailOpen(false)} type="button">
+                Close
+              </button>
+            </div>
+
+            <div className="flex max-h-[75vh] flex-col overflow-y-auto p-4">
+              <section className="mb-4 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <h3 className="font-bold">Player Summary</h3>
+                  <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200">Live</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <SummaryTile accent="emerald" icon="$" label="Current Balance" value={formatMoney(selectedPlayer.balance)} />
+                  <SummaryTile accent="slate" icon="A" label="Total Amount" value={formatMoney(selectedPlayer.totalAmount)} />
+                  <SummaryTile accent="sky" icon="R" label="Total Return" value={formatMoney(selectedPlayer.totalReturn)} />
+                  <SummaryTile accent={selectedPlayer.totalProfit < 0 ? "rose" : "emerald"} icon="P" label="Total Profit" value={formatMoney(selectedPlayer.totalProfit)} />
+                  <SummaryTile accent="emerald" icon="W" label="Win Count" value={formatNumber(selectedPlayer.winCount)} />
+                  <SummaryTile accent="rose" icon="L" label="Loss Count" value={formatNumber(selectedPlayer.lossCount)} />
+                  <SummaryTile accent="amber" icon="D" label="Draw Count" value={formatNumber(selectedPlayer.drawCount)} />
+                  <SummaryTile accent="amber" icon="P" label="Pending Count" value={formatNumber(selectedPlayer.pendingRecordCount)} />
+                </div>
+              </section>
+
+              <button
+                className="mb-4 w-full rounded-2xl bg-emerald-600 py-3 font-bold text-white active:scale-95"
+                onClick={() => requestEdit(() => setRecordFormOpen(true), "record")}
+                type="button"
+              >
+                Add Record
+              </button>
+
+              <div className="mb-4 grid grid-cols-3 gap-2">
+                <button
+                  className="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold text-ink active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-50"
+                  onClick={toggleTrash}
+                  type="button"
+                >
+                  Trash ({selectedPlayer.trashedRecordCount})
+                </button>
+                <button
+                  className="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold text-ink active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-50"
+                  onClick={() => setFinalizedOpen(true)}
+                  type="button"
+                >
+                  Finalized ({finalizedRecords.length})
+                </button>
+                <button
+                  className="rounded-2xl bg-slate-100 px-3 py-3 text-sm font-bold active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white/10"
+                  disabled={players.length === 0 || busy}
+                  onClick={() => setExportOpen(true)}
+                  type="button"
+                >
+                  Export
+                </button>
+              </div>
+
+              {recordFormOpen && editMode ? (
+                <form className="mb-4 rounded-2xl border border-slate-100 bg-slate-50 p-4 dark:border-white/10 dark:bg-white/[0.04]" onSubmit={(event) => event.preventDefault()}>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Field label="Amount">
+                      <input
+                        className="input"
+                        inputMode="decimal"
+                        min="0"
+                        onChange={(event) => setDraft((current) => ({ ...current, amount: event.target.value }))}
+                        placeholder="100000"
+                        step="any"
+                        type="number"
+                        value={draft.amount}
+                      />
+                    </Field>
+                    <div className="rounded-2xl border border-slate-100 bg-white p-3 dark:border-white/10 dark:bg-white/[0.04] sm:col-span-2">
+                      <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Quick Add Amount</p>
+                      <div className="mt-3 grid grid-cols-5 gap-2">
+                        {quickAmountIncrements.map((amount) => (
+                          <button
+                            className="rounded-xl bg-slate-100 py-2 text-sm font-bold text-ink active:scale-95 dark:bg-white/10 dark:text-slate-50"
+                            key={amount}
+                            onClick={() => addQuickAmount(amount)}
+                            type="button"
+                          >
+                            +{amount}
+                          </button>
+                        ))}
+                      </div>
+                      {recentAmounts.length > 0 ? (
+                        <>
+                          <p className="mt-4 text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Recently Used</p>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {recentAmounts.map((amount) => (
+                              <button
+                                className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-800 active:scale-95 dark:border-emerald-400/20 dark:bg-emerald-400/10 dark:text-emerald-200"
+                                key={amount}
+                                onClick={() => setRecentAmount(amount)}
+                                type="button"
+                              >
+                                {formatMoney(amount)}
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      ) : null}
+                    </div>
+                    {draft.comboMode ? (
+                      <div className="rounded-2xl border border-slate-100 bg-white p-3 dark:border-white/10 dark:bg-white/[0.04] sm:col-span-2">
+                        <div className="mb-2 flex items-center justify-between">
+                          <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Combo Selections</p>
+                          <button
+                            className="rounded-xl bg-rose-100 px-2 py-1 text-xs font-bold text-rose-700 active:scale-95 dark:bg-rose-400/20 dark:text-rose-200"
+                            onClick={() => setDraft((current) => ({ ...current, comboMode: false, comboSelections: [] }))}
+                            type="button"
+                          >
+                            Disable Combo
+                          </button>
+                        </div>
+                        {draft.comboSelections.map((sel, idx) => (
+                          <div className="mb-2 grid grid-cols-[1fr_auto_auto] gap-2" key={idx}>
+                            <input
+                              className="input"
+                              inputMode="decimal"
+                              min="0"
+                              onChange={(event) => {
+                                const val = parseDraftNumber(event.target.value);
+                                const updated = [...draft.comboSelections];
+                                updated[idx] = { ...updated[idx], originalRate: val > 0 ? val : 0 };
+                                setDraft((current) => ({ ...current, comboSelections: updated }));
+                              }}
+                              placeholder="Rate"
+                              step="any"
+                              type="number"
+                              value={sel.originalRate || ""}
+                            />
+                            <div className="flex gap-1 rounded-2xl bg-slate-100 p-1 dark:bg-white/10">
+                              {comboOutcomeOptions.map((outcome) => (
+                                <button
+                                  className={`rounded-xl px-2 py-1 text-xs font-bold transition active:scale-95 ${sel.outcome === outcome ? "bg-white text-ink shadow-sm dark:bg-[#121d19] dark:text-slate-50" : "text-slate-600 hover:text-ink dark:text-slate-400 dark:hover:text-slate-200"}`}
+                                  key={outcome}
+                                  onClick={() => {
+                                    const updated = [...draft.comboSelections];
+                                    updated[idx] = { ...updated[idx], outcome };
+                                    setDraft((current) => ({ ...current, comboSelections: updated }));
+                                  }}
+                                  type="button"
+                                >
+                                  {comboOutcomeLabels[outcome]}
+                                </button>
+                              ))}
+                            </div>
+                            <button
+                              className="rounded-xl bg-rose-50 px-2 text-sm font-bold text-rose-700 active:scale-95 dark:bg-rose-400/10 dark:text-rose-200"
+                              onClick={() => {
+                                const updated = draft.comboSelections.filter((_, i) => i !== idx);
+                                setDraft((current) => ({ ...current, comboSelections: updated }));
+                              }}
+                              type="button"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ))}
+                        <button
+                          className="w-full rounded-xl border border-dashed border-slate-300 py-2 text-sm font-bold text-slate-500 active:scale-95 dark:border-white/20 dark:text-slate-400"
+                          onClick={() => setDraft((current) => ({ ...current, comboSelections: [...current.comboSelections, { originalRate: 0, outcome: "WIN" }] }))}
+                          type="button"
+                        >
+                          + Add Selection
+                        </button>
+                        {draftComboResult && draft.comboSelections.length > 0 ? (
+                          <div className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50 p-3 text-sm dark:border-emerald-400/20 dark:bg-emerald-400/10">
+                            <p className="text-xs font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Combo Breakdown</p>
+                            <div className="mt-1 space-y-1">
+                              {draftComboResult.currentRates.map((rate, i) => (
+                                <p key={i} className="text-emerald-800 dark:text-emerald-200">
+                                  Leg {i + 1}: {comboOutcomeLabels[draft.comboSelections[i]?.outcome] ?? "?"} → {rate.toFixed(4)}
+                                </p>
+                              ))}
+                              <p className="font-bold text-emerald-900 dark:text-emerald-100">Final Rate: {draftComboResult.finalRate.toFixed(4)}</p>
+                              <p className="font-bold text-emerald-900 dark:text-emerald-100">Net Profit: {formatMoney(draftComboResult.netProfit)}</p>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <Field label="Rate">
+                        <input
+                          className="input"
+                          inputMode="decimal"
+                          min="0"
+                          onChange={(event) => setDraft((current) => ({ ...current, rate: event.target.value }))}
+                          placeholder="1.95"
+                          step="any"
+                          type="number"
+                          value={draft.rate}
+                        />
+                      </Field>
+                    )}
+                    <div className="flex items-start gap-2 sm:col-span-2">
+                      <div className="flex-1">
+                        <Field label="Note">
+                          <textarea
+                            className="input min-h-24 resize-none"
+                            onChange={(event) => setDraft((current) => ({ ...current, note: event.target.value }))}
+                            placeholder="Optional note"
+                            value={draft.note}
+                          />
+                        </Field>
+                      </div>
+                      <button
+                        className={`mt-6 whitespace-nowrap rounded-2xl px-4 py-3 text-sm font-bold active:scale-95 ${draft.comboMode ? "bg-emerald-600 text-white" : "border border-slate-200 bg-white text-ink dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-50"}`}
+                        onClick={() => setDraft((current) => ({ ...current, comboMode: !current.comboMode, comboSelections: current.comboMode ? [] : current.comboSelections }))}
+                        type="button"
+                      >
+                        {draft.comboMode ? "Combo ✓" : "Combo"}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-4 rounded-2xl border border-emerald-100 bg-white p-4 dark:border-emerald-400/20 dark:bg-white/[0.04]">
+                    <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                      {draft.comboMode ? "Total Expected Return" : "Expected Return"}
+                    </p>
+                    <p className="mt-1 text-xl font-bold text-ink dark:text-slate-50">{formatMoney(draftExpectedReturn)}</p>
+                  </div>
+                  <div className="mt-4 flex gap-2">
+                    <button className="flex-1 rounded-2xl bg-emerald-600 py-3 font-bold text-white active:scale-95" disabled={busy} onClick={saveRecord} type="button">
+                      Save Record
+                    </button>
+                    <button className="rounded-2xl bg-slate-200 px-4 font-bold dark:bg-white/10" onClick={resetRecordForm} type="button">
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+
+              {recordError ? <StateBox tone="error" text={recordError} /> : null}
+              {recordState !== "loading" && records.length === 0 ? <StateBox tone="empty" text="No records yet. Add the first record for this player." /> : null}
+
+              <p className="mt-3 text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                Pending Records ({pendingRecords.length})
+              </p>
+              <div className="mt-2 flex flex-col gap-3">
+                {pendingRecords.map((record) => {
+                  const expectedReturn = getExpectedReturn(record.amount, record.rate);
+                  const isExpanded = expandedRecordId === record.id || confirmingRecordId === record.id;
+                  const summaryLabel = record.status === "pending" ? "Expected Return" : "Profit";
+                  const summaryValue = record.status === "pending" ? expectedReturn : record.profit;
+
+                  return (
+                  <article className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-white/[0.03]" key={record.id}>
+                    <button
+                      aria-expanded={isExpanded}
+                      className="w-full text-left"
+                      onClick={() => setExpandedRecordId((current) => (current === record.id ? null : record.id))}
+                      type="button"
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm text-slate-500 dark:text-slate-400">{formatDate(record.createdAt)}</p>
+                          <p className="mt-1 text-sm font-bold text-emerald-700 dark:text-emerald-300">
+                            {record.status === "pending" ? "Result Pending" : "Result Confirmed"}
+                          </p>
+                        </div>
+                        <StatusBadge status={record.status} />
+                      </div>
+                      <div className="mt-4 flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
+                        <div>
+                          <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">{summaryLabel}</p>
+                          <p className={`mt-1 text-lg font-bold ${summaryValue < 0 ? "text-rose-700 dark:text-rose-300" : "text-ink dark:text-slate-50"}`}>
+                            {formatMoney(summaryValue)}
+                          </p>
+                        </div>
+                        <span className="text-sm font-bold text-slate-500 dark:text-slate-400">{isExpanded ? "Hide Details" : "View Details"}</span>
+                      </div>
+                    </button>
+                    {isExpanded ? (
+                      <>
+                    <div className="mt-4">
+                      {record.note ? <p className="font-medium">{record.note}</p> : <p className="text-sm text-slate-400 dark:text-slate-500">No note</p>}
+                    </div>
+                    <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
+                      <MiniMetric label="Amount" value={formatMoney(record.amount)} />
+                      <MiniMetric label="Rate" value={formatNumber(record.rate)} />
+                      <MiniMetric label="Status" value={record.status === "pending" ? "Pending" : "Finalized"} />
+                      <MiniMetric label="Result" value={record.resultType ? resultLabels[record.resultType] : "Pending"} />
+                      <MiniMetric label={record.status === "pending" ? "Expected Return" : "Return"} value={record.status === "pending" ? formatMoney(expectedReturn) : formatMoney(record.returnAmount)} />
+                      <MiniMetric label="Profit" value={record.status === "pending" ? "-" : formatMoney(record.profit)} />
+                      <MiniMetric label="Balance" value={record.balance === null ? "-" : formatMoney(record.balance)} />
+                    </div>
+                    {record.status === "pending" ? (
+                      <div className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
+                        {confirmingRecordId === record.id ? (
+                          <div className="flex flex-col gap-4">
+                            <div>
+                              <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">Select Result</p>
+                              <div className="flex flex-wrap gap-1 rounded-2xl bg-slate-100 p-1 dark:bg-white/10">
+                                {resultOptions.map((resultType) => {
+                                  const isActive = selectedResultType === resultType;
+                                  return (
+                                    <button
+                                      className={`flex-1 rounded-xl py-2 px-1 text-center text-xs font-bold transition active:scale-95 whitespace-nowrap ${
+                                        isActive
+                                          ? "bg-white text-ink shadow-sm dark:bg-[#121d19] dark:text-slate-50"
+                                          : "text-slate-600 hover:text-ink dark:text-slate-400 dark:hover:text-slate-200"
+                                      }`}
+                                      key={resultType}
+                                      onClick={() => setSelectedResultType(resultType)}
+                                      type="button"
+                                    >
+                                      {resultLabels[resultType]}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                className="flex-1 rounded-2xl bg-emerald-600 py-3 font-bold text-white active:scale-95"
+                                disabled={busy}
+                                onClick={() => confirmRecord(record.id, selectedResultType)}
+                                type="button"
+                              >
+                                Confirm
+                              </button>
+                              <button
+                                className="rounded-2xl bg-slate-200 px-4 py-3 font-bold dark:bg-white/10"
+                                onClick={() => setConfirmingRecordId(null)}
+                                type="button"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            className="w-full rounded-2xl bg-ink py-3 text-sm font-bold text-white"
+                            onClick={() => {
+                              if (!editMode) {
+                                setPendingConfirmRecordId(record.id);
+                                openPinFor("confirm");
+                                return;
+                              }
+                              setConfirmingRecordId(record.id);
+                              setExpandedRecordId(record.id);
+                              setSelectedResultType("win");
+                            }}
+                            type="button"
+                          >
+                            Confirm Result
+                          </button>
+                        )}
+                      </div>
+                    ) : null}
+                    {editMode ? (
+                      <div className="mt-4 flex gap-2">
+                        {record.status === "pending" ? (
+                          <button className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold dark:bg-white/10" onClick={() => startEditRecord(record)} type="button">
+                            Edit Record
+                          </button>
+                        ) : null}
+                        <button className="flex-1 rounded-2xl bg-rose-50 py-2 text-sm font-bold text-rose-700 dark:bg-rose-400/10 dark:text-rose-200" onClick={() => removeRecord(record)} type="button">
+                          Move to Trash
+                        </button>
+                      </div>
+                    ) : null}
+                      </>
+                    ) : null}
+                  </article>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+    </main>
+  );
+}
+
+function ConfirmDialog({
+  body,
+  busy,
+  confirmLabel,
+  onCancel,
+  onConfirm,
+  onReasonChange,
+  reason,
+  reasonError,
+  title,
+}: {
+  body: string;
+  busy: boolean;
+  confirmLabel: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+  onReasonChange?: (value: string) => void;
+  reason?: string;
+  reasonError?: string;
+  title: string;
+}) {
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-ink/60 p-4 backdrop-blur-sm sm:items-center sm:justify-center">
+      <section className="w-full rounded-[1.5rem] border border-white/80 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-[#121d19] sm:max-w-sm">
+        <p className="text-sm font-bold uppercase tracking-wide text-rose-700 dark:text-rose-300">Confirm Action</p>
+        <h2 className="mt-2 text-xl font-bold">{title}</h2>
+        <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-400">{body}</p>
+        {reason !== undefined ? (
+          <label className="mt-4 flex flex-col gap-2 text-sm font-bold text-slate-700 dark:text-slate-300">
+            Delete Reason
+            <textarea
+              className="input min-h-24 resize-none"
+              onChange={(event) => onReasonChange?.(event.target.value)}
+              placeholder="Enter a reason before deleting"
+              value={reason}
+            />
+            {reasonError ? <span className="text-sm font-semibold text-rose-700 dark:text-rose-300">{reasonError}</span> : null}
+          </label>
+        ) : null}
+        <div className="mt-5 flex gap-2">
+          <button className="rounded-2xl bg-slate-100 px-4 font-bold dark:bg-white/10" disabled={busy} onClick={onCancel} type="button">
+            Cancel
+          </button>
+          <button className="flex-1 rounded-2xl bg-rose-600 py-3 font-bold text-white active:scale-95 disabled:opacity-60" disabled={busy} onClick={onConfirm} type="button">
+            {confirmLabel}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ExportDialog({
+  busy,
+  canExportRecords,
+  onCancel,
+  onExportAllData,
+  onExportCurrentSession,
+  onExportRecords,
+}: {
+  busy: boolean;
+  canExportRecords: boolean;
+  onCancel: () => void;
+  onExportAllData: () => void;
+  onExportCurrentSession: () => void;
+  onExportRecords: () => void;
+}) {
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-ink/60 p-4 backdrop-blur-sm sm:items-center sm:justify-center">
+      <section className="w-full rounded-[1.5rem] border border-white/80 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-[#121d19] sm:max-w-sm">
+        <p className="text-sm font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Export</p>
+        <h2 className="mt-2 text-xl font-bold">Choose Export Type</h2>
+        <div className="mt-5 grid gap-2">
+          <button className="rounded-2xl bg-slate-100 px-4 py-3 text-left font-bold active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white/10" disabled={!canExportRecords || busy} onClick={onExportRecords} type="button">
+            Export Records
+          </button>
+          <button className="rounded-2xl bg-slate-100 px-4 py-3 text-left font-bold active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white/10" disabled={busy} onClick={onExportCurrentSession} type="button">
+            Export Current Session
+          </button>
+          <button className="rounded-2xl bg-slate-100 px-4 py-3 text-left font-bold active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white/10" disabled={busy} onClick={onExportAllData} type="button">
+            Export All Data
+          </button>
+        </div>
+        <button className="mt-4 w-full rounded-2xl bg-slate-100 px-4 py-3 font-bold text-ink dark:bg-slate-700 dark:text-slate-50" disabled={busy} onClick={onCancel} type="button">
+          Cancel
+        </button>
+      </section>
+    </div>
+  );
+}
+
+const COUNTRY_CODE_MAP: Record<string, string> = {
+  "Afghanistan": "af", "Albania": "al", "Algeria": "dz", "Argentina": "ar", "Australia": "au",
+  "Austria": "at", "Bahrain": "bh", "Belgium": "be", "Bolivia": "bo", "Bosnia and Herzegovina": "ba",
+  "Brazil": "br", "Cameroon": "cm", "Canada": "ca", "Chile": "cl", "China PR": "cn", "China": "cn",
+  "Colombia": "co", "Comoros": "km", "Congo DR": "cd", "Costa Rica": "cr", "Croatia": "hr",
+  "Haiti": "ht",
+  "Czech Republic": "cz", "Czechia": "cz", "Denmark": "dk", "DR Congo": "cd", "Ecuador": "ec",
+  "Egypt": "eg", "England": "gb-eng", "Equatorial Guinea": "gq", "Finland": "fi", "France": "fr",
+  "Germany": "de", "Ghana": "gh", "Greece": "gr", "Honduras": "hn", "Hungary": "hu",
+  "Iceland": "is", "Indonesia": "id", "Iran": "ir", "Iraq": "iq", "Ireland": "ie",
+  "Israel": "il", "Italy": "it", "Ivory Coast": "ci", "Côte d'Ivoire": "ci",
+  "Jamaica": "jm", "Japan": "jp", "Jordan": "jo", "Kenya": "ke",
+  "Korea Republic": "kr", "South Korea": "kr", "Kuwait": "kw",
+  "Mali": "ml", "Mexico": "mx", "Morocco": "ma", "Mozambique": "mz",
+  "Netherlands": "nl", "New Zealand": "nz", "Nigeria": "ng", "North Macedonia": "mk",
+  "Norway": "no", "Oman": "om", "Panama": "pa", "Paraguay": "py", "Peru": "pe",
+  "Philippines": "ph", "Poland": "pl", "Portugal": "pt", "Qatar": "qa",
+  "Romania": "ro", "Russia": "ru", "Saudi Arabia": "sa", "Scotland": "gb-sct",
+  "Senegal": "sn", "Serbia": "rs", "Slovakia": "sk", "Slovenia": "si",
+  "South Africa": "za", "Spain": "es", "Sweden": "se", "Switzerland": "ch",
+  "Tanzania": "tz", "Thailand": "th", "Trinidad and Tobago": "tt",
+  "Tunisia": "tn", "Turkey": "tr", "Türkiye": "tr",
+  "USA": "us", "United States": "us", "Uruguay": "uy", "Uzbekistan": "uz",
+  "Venezuela": "ve", "Vietnam": "vn", "Wales": "gb-wls",
+  "Ukraine": "ua", "United Arab Emirates": "ae",
+};
+
+function getCountryCode(teamName: string | null): string | null {
+  if (!teamName) return null;
+  return COUNTRY_CODE_MAP[teamName] ?? null;
+}
+
+function TeamFlag({ team }: { team: string | null }) {
+  const code = getCountryCode(team);
+  if (!code) return null;
+  return (
+    <img
+      alt={`${team} flag`}
+      className="inline-block h-5 w-7 rounded-sm object-cover shadow-sm"
+      loading="lazy"
+      src={`https://flagcdn.com/w40/${code}.png`}
+      srcSet={`https://flagcdn.com/w80/${code}.png 2x`}
+    />
+  );
+}
+
+function ScheduleDialog({
+  error,
+  lastSyncedAt,
+  loading,
+  matches,
+  onCancel,
+  onSync,
+}: {
+  error: string;
+  lastSyncedAt: string | null;
+  loading: boolean;
+  matches: WorldCupMatch[];
+  onCancel: () => void;
+  onSync: () => void;
+}) {
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+
+  const groupedMatches = matches.reduce<Record<string, WorldCupMatch[]>>((groups, match) => {
+    const key = match.kickoffAt ? formatScheduleDay(match.kickoffAt) : "Date TBA";
+    groups[key] = [...(groups[key] ?? []), match];
+    return groups;
+  }, {});
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-ink/60 p-4 backdrop-blur-sm sm:items-center sm:justify-center">
+      <section className="max-h-[88vh] w-full overflow-hidden rounded-[1.5rem] border border-white/80 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-[#121d19] sm:max-w-4xl">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">World Cup 2026</p>
+            <h2 className="mt-2 text-2xl font-black">Schedule</h2>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+              {lastSyncedAt ? `Last synced ${formatScheduleDate(lastSyncedAt)}` : "Sync updates when this modal opens."}
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              className="rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white active:scale-95 disabled:opacity-60"
+              disabled={loading}
+              onClick={onSync}
+              type="button"
+            >
+              {loading ? "Syncing..." : "Sync"}
+            </button>
+            <button className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-bold text-ink dark:bg-slate-700 dark:text-slate-50" onClick={onCancel} type="button">
+              Close
+            </button>
+          </div>
+        </div>
+
+        {error ? <StateBox tone="error" text={error} /> : null}
+        {loading && matches.length === 0 ? <p className="mt-5 rounded-2xl bg-slate-100 p-4 text-sm font-semibold dark:bg-white/10">Loading schedule...</p> : null}
+        {!loading && matches.length === 0 ? <p className="mt-5 rounded-2xl bg-slate-100 p-4 text-sm font-semibold dark:bg-white/10">No World Cup matches loaded yet.</p> : null}
+
+        <div className="mt-5 flex max-h-[64vh] flex-col gap-5 overflow-y-auto pr-1">
+          {Object.entries(groupedMatches).map(([day, dayMatches]) => (
+            <section key={day}>
+              <h3 className="sticky top-0 z-10 rounded-2xl border border-slate-100 bg-white/95 px-3 py-2 text-sm font-black text-slate-700 backdrop-blur dark:border-white/10 dark:bg-[#121d19]/95 dark:text-slate-200">
+                {day}
+              </h3>
+              <div className="mt-3 grid gap-3">
+                {dayMatches.map((match) => (
+                  <article className="rounded-2xl border border-slate-100 bg-slate-50 p-4 dark:border-white/10 dark:bg-white/[0.04]" key={match.id}>
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                          {cleanStage(match.stage)}
+                          {match.groupName ? ` • ${match.groupName}` : ""}
+                        </p>
+                        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                          {match.kickoffAt ? formatScheduleDate(match.kickoffAt) : "Kickoff TBA"}
+                        </p>
+                      </div>
+                      <WorldCupStatusBadge status={match.status} />
+                    </div>
+                    <div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+                      <div className="flex items-center justify-end gap-2">
+                        <p className="min-w-0 break-words text-right text-base font-black">{match.homeTeam ?? "TBA"}</p>
+                        <TeamFlag team={match.homeTeam} />
+                      </div>
+                      <div className="rounded-2xl bg-white px-4 py-2 text-center font-black shadow-sm dark:bg-[#121d19]">
+                        {match.homeScore === null || match.awayScore === null ? "vs" : `${match.homeScore} - ${match.awayScore}`}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <TeamFlag team={match.awayTeam} />
+                        <p className="min-w-0 break-words text-base font-black">{match.awayTeam ?? "TBA"}</p>
+                      </div>
+                    </div>
+                    {match.winner === "Draw" ? (
+                      <p className="mt-3 text-center text-sm font-bold text-amber-600 dark:text-amber-400">Draw</p>
+                    ) : match.winner ? (
+                      <p className="mt-3 text-center text-sm font-bold text-emerald-700 dark:text-emerald-300">🏆 {match.winner}</p>
+                    ) : null}
+                  </article>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function TrashDialog({
+  loading,
+  onCancel,
+  records,
+}: {
+  loading: boolean;
+  onCancel: () => void;
+  records: RecordWithBalance[];
+}) {
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-ink/60 p-4 backdrop-blur-sm sm:items-center sm:justify-center">
+      <section className="max-h-[86vh] w-full overflow-hidden rounded-[1.5rem] border border-white/80 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-[#121d19] sm:max-w-2xl">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-bold uppercase tracking-wide text-rose-700 dark:text-rose-300">Trash</p>
+            <h2 className="mt-2 text-xl font-bold">Deleted Records</h2>
+          </div>
+          <button className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-bold text-ink dark:bg-slate-700 dark:text-slate-50" onClick={onCancel} type="button">
+            Close
+          </button>
+        </div>
+
+        {loading ? <p className="mt-5 rounded-2xl bg-slate-100 p-4 text-sm font-semibold dark:bg-white/10">Loading trash...</p> : null}
+        {!loading && records.length === 0 ? <p className="mt-5 rounded-2xl bg-slate-100 p-4 text-sm font-semibold dark:bg-white/10">Trash is empty.</p> : null}
+
+        <div className="mt-5 flex max-h-[62vh] flex-col gap-3 overflow-y-auto pr-1">
+          {records.map((record) => (
+            <article className="rounded-2xl border border-rose-100 bg-rose-50/60 p-3 dark:border-rose-400/20 dark:bg-rose-400/10" key={record.id}>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-bold text-rose-800 dark:text-rose-100">{record.status === "pending" ? "Pending Record" : "Finalized Record"}</p>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Deleted: {record.deletedAt ? formatDate(record.deletedAt) : "-"}</p>
+                </div>
+                <ProfitBadge value={record.profit} />
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+                <MiniMetric label="Amount" value={formatMoney(record.amount)} />
+                <MiniMetric label="Rate" value={formatNumber(record.rate)} />
+                <MiniMetric label="Result" value={record.resultType ? resultLabels[record.resultType] : "Pending"} />
+                <MiniMetric label="Return" value={record.status === "pending" ? formatMoney(getExpectedReturn(record.amount, record.rate)) : formatMoney(record.returnAmount)} />
+              </div>
+              <div className="mt-3 rounded-2xl bg-white/75 p-3 text-sm dark:bg-[#121d19]/80">
+                <p className="text-xs font-bold uppercase tracking-wide text-rose-700 dark:text-rose-200">Delete Reason</p>
+                <p className="mt-1 text-rose-900 dark:text-rose-50">{record.deleteReason}</p>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function FinalizedRecordsDialog({
+  onCancel,
+  records,
+}: {
+  onCancel: () => void;
+  records: RecordWithBalance[];
+}) {
+  const totalProfit = records.reduce((sum, r) => sum + r.profit, 0);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-ink/60 p-4 backdrop-blur-sm sm:items-center sm:justify-center">
+      <section className="max-h-[86vh] w-full overflow-hidden rounded-[1.5rem] border border-white/80 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-[#121d19] sm:max-w-2xl">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Records</p>
+            <h2 className="mt-2 text-xl font-bold">Finalized Records</h2>
+          </div>
+          <button className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-bold text-ink dark:bg-slate-700 dark:text-slate-50" onClick={onCancel} type="button">
+            Close
+          </button>
+        </div>
+
+        {records.length > 0 ? (
+          <div className={`mt-5 rounded-2xl border p-4 text-center ${totalProfit >= 0 ? "border-emerald-100 bg-emerald-50 dark:border-emerald-400/20 dark:bg-emerald-400/10" : "border-rose-100 bg-rose-50 dark:border-rose-400/20 dark:bg-rose-400/10"}`}>
+            <p className="text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Total Profit / Loss</p>
+            <p className={`mt-1 text-3xl font-black ${totalProfit >= 0 ? "text-emerald-800 dark:text-emerald-200" : "text-rose-800 dark:text-rose-200"}`}>
+              {totalProfit >= 0 ? "+" : ""}{formatMoney(totalProfit)}
+            </p>
+          </div>
+        ) : null}
+
+        {records.length === 0 ? <p className="mt-5 rounded-2xl bg-slate-100 p-4 text-sm font-semibold dark:bg-white/10">No finalized records.</p> : null}
+
+        <div className="mt-5 flex max-h-[56vh] flex-col gap-3 overflow-y-auto pr-1">
+          {records.map((record) => {
+            const isExpanded = expandedId === record.id;
+            return (
+              <article className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-white/[0.03]" key={record.id}>
+                <button
+                  aria-expanded={isExpanded}
+                  className="w-full text-left"
+                  onClick={() => setExpandedId((current) => (current === record.id ? null : record.id))}
+                  type="button"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm text-slate-500 dark:text-slate-400">{formatDate(record.createdAt)}</p>
+                      <p className="mt-1 text-sm font-bold text-emerald-700 dark:text-emerald-300">Result Confirmed</p>
+                    </div>
+                    <StatusBadge status={record.status} />
+                  </div>
+                  <div className="mt-4 flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Profit</p>
+                      <p className={`mt-1 text-lg font-bold ${record.profit < 0 ? "text-rose-700 dark:text-rose-300" : "text-ink dark:text-slate-50"}`}>
+                        {formatMoney(record.profit)}
+                      </p>
+                    </div>
+                    <span className="text-sm font-bold text-slate-500 dark:text-slate-400">{isExpanded ? "Hide Details" : "View Details"}</span>
+                  </div>
+                </button>
+                {isExpanded ? (
+                  <>
+                    <div className="mt-4 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+                      <MiniMetric label="Amount" value={formatMoney(record.amount)} />
+                      <MiniMetric label="Rate" value={formatNumber(record.rate)} />
+                      <MiniMetric label="Result" value={record.resultType ? resultLabels[record.resultType] : "-"} />
+                      <MiniMetric label="Return" value={formatMoney(record.returnAmount)} />
+                      <MiniMetric label="Profit" value={formatMoney(record.profit)} />
+                      <MiniMetric label="Balance" value={record.balance === null ? "-" : formatMoney(record.balance)} />
+                      <MiniMetric label="Status" value="Finalized" />
+                    </div>
+                    {record.note ? (
+                      <div className="mt-3 rounded-2xl bg-slate-50 p-3 text-sm dark:bg-white/[0.04]">
+                        <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Note</p>
+                        <p className="mt-1 text-slate-700 dark:text-slate-200">{record.note}</p>
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
+              </article>
+            );
+          })}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function Metric({ label, value, positive }: { label: string; value: string; positive?: boolean }) {
+  return (
+    <div className="rounded-2xl border border-white/80 bg-white/95 p-4 shadow-soft dark:border-white/10 dark:bg-[#121d19]/95">
+      <p className="text-sm text-slate-500 dark:text-slate-400">{label}</p>
+      <p className={`mt-2 text-xl font-bold ${positive === false ? "text-rose-700 dark:text-rose-300" : "text-ink dark:text-slate-50"}`}>{value}</p>
+    </div>
+  );
+}
+
+function SummaryTile({
+  accent,
+  icon,
+  label,
+  value,
+}: {
+  accent: "amber" | "emerald" | "rose" | "sky" | "slate";
+  icon: string;
+  label: string;
+  value: string;
+}) {
+  const styles = {
+    amber: "border-amber-100 bg-amber-50 text-amber-800 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-200",
+    emerald: "border-emerald-100 bg-emerald-50 text-emerald-800 dark:border-emerald-400/20 dark:bg-emerald-400/10 dark:text-emerald-200",
+    rose: "border-rose-100 bg-rose-50 text-rose-800 dark:border-rose-400/20 dark:bg-rose-400/10 dark:text-rose-200",
+    sky: "border-sky-100 bg-sky-50 text-sky-800 dark:border-sky-400/20 dark:bg-sky-400/10 dark:text-sky-200",
+    slate: "border-slate-100 bg-white text-slate-700 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-200",
+  };
+
+  return (
+    <div className={`rounded-2xl border p-3 ${styles[accent]}`}>
+      <div className="mb-3 flex items-center gap-2">
+        <span className="flex size-7 items-center justify-center rounded-full bg-white/70 text-xs font-black dark:bg-white/10">{icon}</span>
+        <p className="text-xs font-bold uppercase tracking-wide opacity-80">{label}</p>
       </div>
+      <p className="break-words text-lg font-black text-ink dark:text-slate-50">{value}</p>
+    </div>
+  );
+}
+
+function MiniMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
+      <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</p>
+      <p className="mt-1 break-words font-bold text-ink dark:text-slate-50">{value}</p>
+    </div>
+  );
+}
+
+function ProfitBadge({ value }: { value: number }) {
+  const positive = value >= 0;
+  return (
+    <span className={`rounded-full px-3 py-1 text-sm font-bold ${positive ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200" : "bg-rose-100 text-rose-800 dark:bg-rose-400/15 dark:text-rose-200"}`}>
+      {formatMoney(value)}
+    </span>
+  );
+}
+
+function StatusBadge({ status }: { status: "pending" | "finalized" }) {
+  return (
+    <span className={`rounded-full px-3 py-1 text-sm font-bold ${status === "pending" ? "bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-200" : "bg-emerald-100 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200"}`}>
+      {status === "pending" ? "Pending" : "Finalized"}
+    </span>
+  );
+}
+
+function WorldCupStatusBadge({ status }: { status: WorldCupMatch["status"] }) {
+  const styles = {
+    scheduled: "bg-sky-100 text-sky-800 dark:bg-sky-400/15 dark:text-sky-200",
+    live: "bg-rose-100 text-rose-800 dark:bg-rose-400/15 dark:text-rose-200",
+    finished: "bg-emerald-100 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200",
+    postponed: "bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-200",
+    cancelled: "bg-slate-200 text-slate-700 dark:bg-white/10 dark:text-slate-200",
+  };
+  const labels = {
+    scheduled: "Scheduled",
+    live: "Live",
+    finished: "Finished",
+    postponed: "Postponed",
+    cancelled: "Cancelled",
+  };
+
+  return <span className={`rounded-full px-3 py-1 text-sm font-bold ${styles[status]}`}>{labels[status]}</span>;
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="flex flex-col gap-2 text-sm font-bold text-slate-700 dark:text-slate-300">
+      {label}
+      {children}
+    </label>
+  );
+}
+
+
+function StateBox({ text, tone }: { text: string; tone: "error" | "empty" }) {
+  return (
+    <div className={`my-3 rounded-2xl border p-4 text-sm font-semibold ${tone === "error" ? "border-rose-100 bg-rose-50 text-rose-800 dark:border-rose-400/20 dark:bg-rose-400/10 dark:text-rose-200" : "border-emerald-100 bg-mint text-emerald-900 dark:border-emerald-400/20 dark:bg-emerald-400/10 dark:text-emerald-100"}`}>
+      {text}
     </div>
   );
 }

@@ -1,6 +1,5 @@
-import type { Player, RecordItem, RecordWithBalance, WorldCupMatch, ComboLegRow } from "./types";
+import type { Player, RecordItem, RecordWithBalance, WorldCupMatch } from "./types";
 import type { PlayerRow, RecordRow, WorldCupMatchRow } from "./db";
-import { parseComboLegs } from "./db";
 
 export function toNumber(value: string | number) {
   return typeof value === "number" ? value : Number(value);
@@ -38,7 +37,6 @@ export function mapRecord(row: RecordRow): RecordItem {
     returnAmount: toNumber(row.return_amount),
     profit: toNumber(row.profit),
     note: row.note,
-    comboLegs: parseComboLegs(row.combo_legs),
     deletedAt: row.deleted_at ? toIsoText(row.deleted_at) : null,
     deleteReason: row.delete_reason,
     createdAt: toIsoText(row.created_at),
