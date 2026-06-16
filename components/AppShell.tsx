@@ -714,7 +714,9 @@ export default function AppShell() {
           current.map((player) => (player.id === selectedId ? applyConfirmedRecordSummary(player, data.record) : player)),
         );
       }
-      setConfirmingRecordId(null);
+      if (legIndex === undefined || data.record.status === "finalized") {
+        setConfirmingRecordId(null);
+      }
       refreshSelectedData(selectedId);
     });
   }
@@ -1293,6 +1295,7 @@ export default function AppShell() {
                       <div className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
                         {confirmingRecordId === record.id ? (
                           <div className="flex flex-col gap-4">
+                            {!record.comboLegs?.length ? (
                             <div>
                               <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">Select Result</p>
                               <div className="flex flex-wrap gap-1 rounded-2xl bg-slate-100 p-1 dark:bg-white/10">
@@ -1315,6 +1318,7 @@ export default function AppShell() {
                                 })}
                               </div>
                             </div>
+                            ) : null}
                             {record.comboLegs?.length ? (
                               <div className="grid gap-3">
                                 {record.comboLegs.map((leg, index) => {
@@ -1823,6 +1827,7 @@ export default function AppShell() {
                       <div className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
                         {confirmingRecordId === record.id ? (
                           <div className="flex flex-col gap-4">
+                            {!record.comboLegs?.length ? (
                             <div>
                               <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">Select Result</p>
                               <div className="flex flex-wrap gap-1 rounded-2xl bg-slate-100 p-1 dark:bg-white/10">
@@ -1845,6 +1850,7 @@ export default function AppShell() {
                                 })}
                               </div>
                             </div>
+                            ) : null}
                             {record.comboLegs?.length ? (
                               <div className="grid gap-3">
                                 {record.comboLegs.map((leg, index) => {
@@ -2122,7 +2128,14 @@ function countryFlagEmoji(code: string) {
 function TeamFlag({ team }: { team: string | null }) {
   const code = getCountryCode(team);
   if (!code) return null;
-  return <span aria-label={`${team} flag`} className="text-xl leading-none">{countryFlagEmoji(code)}</span>;
+  return (
+    <span
+      aria-label={`${team} flag`}
+      className="inline-block h-5 w-7 shrink-0 rounded-[0.2rem] bg-cover bg-center shadow-sm ring-1 ring-black/5 dark:ring-white/10"
+      role="img"
+      style={{ backgroundImage: `url(https://flagcdn.com/w40/${code}.png)` }}
+    />
+  );
 }
 
 function ScheduleDialog({
