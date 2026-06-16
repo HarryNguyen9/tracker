@@ -5,13 +5,15 @@ import { jsonError } from "../../../lib/http";
 import { mapRecord } from "../../../lib/mappers";
 import { ensureTrackerSchema, ensureTrackerSchemaIfNeeded } from "../../../lib/schema";
 import { calculateRecordValues, cleanOptionalText, cleanText, parseGreaterThanZeroNumber, parseNonNegativeNumber, parseResultType } from "../../../lib/validation";
+import { normalizeComboSelections, summarizeComboLegs } from "../../../lib/combo";
+import type { ComboSelection } from "../../../lib/types";
 
 type Params = { params: { id: string } };
 type Sql = ReturnType<typeof getSql>;
 
 async function updateRecord(sql: Sql, id: string, body: Record<string, unknown>, note: string | null) {
   const [existing] = (await sql`
-    select id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, created_at, updated_at
+    select id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, combo_legs, created_at, updated_at
     from records
     where id = ${id}
       and deleted_at is null
@@ -22,8 +24,10 @@ async function updateRecord(sql: Sql, id: string, body: Record<string, unknown>,
   }
 
   if (existing.status === "pending") {
+    const comboLegs = Array.isArray(body.comboLegs) ? normalizeComboSelections(body.comboLegs as ComboSelection[]) : null;
     const amount = parseGreaterThanZeroNumber(body.amount, "Amount");
-    const rate = parseNonNegativeNumber(body.rate, "Rate");
+    const comboSummary = comboLegs ? summarizeComboLegs(amount, comboLegs) : null;
+    const rate = comboSummary ? comboSummary.rate : parseNonNegativeNumber(body.rate, "Rate");
     const [record] = (await sql`
       update records
       set amount = ${amount},
@@ -33,9 +37,10 @@ async function updateRecord(sql: Sql, id: string, body: Record<string, unknown>,
           result_type = null,
           return_amount = 0,
           profit = 0,
+          combo_legs = ${comboLegs ? JSON.stringify(comboLegs) : null},
           updated_at = now()
       where id = ${id}
-      returning id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, created_at, updated_at
+      returning id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, combo_legs, created_at, updated_at
     `) as RecordRow[];
     return record;
   }
@@ -59,7 +64,7 @@ async function updateRecord(sql: Sql, id: string, body: Record<string, unknown>,
         note = ${note},
         updated_at = now()
     where id = ${id}
-    returning id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, created_at, updated_at
+    returning id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, combo_legs, created_at, updated_at
   `) as RecordRow[];
 
   return record;
@@ -106,7 +111,7 @@ export async function DELETE(request: Request, { params }: Params) {
           updated_at = now()
       where id = ${params.id}
         and deleted_at is null
-      returning id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, created_at, updated_at
+      returning id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, combo_legs, created_at, updated_at
     `) as RecordRow[];
 
     if (!record) {

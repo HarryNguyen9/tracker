@@ -5,6 +5,8 @@ import { jsonError } from "../../lib/http";
 import { mapRecord, withBalance } from "../../lib/mappers";
 import { ensureTrackerSchema, ensureTrackerSchemaIfNeeded } from "../../lib/schema";
 import { cleanOptionalText, parseGreaterThanZeroNumber, parseNonNegativeNumber } from "../../lib/validation";
+import { normalizeComboSelections, summarizeComboLegs } from "../../lib/combo";
+import type { ComboSelection } from "../../lib/types";
 
 type Sql = ReturnType<typeof getSql>;
 
@@ -77,10 +79,11 @@ export async function POST(request: Request) {
       throw new Error("Player is required.");
     }
 
-    const amount = parseGreaterThanZeroNumber(body.amount, "Amount");
-    const rate = parseNonNegativeNumber(body.rate, "Rate");
     const note = cleanOptionalText(body.note);
-    const comboLegs = Array.isArray(body.comboLegs) ? body.comboLegs : null;
+    const comboLegs = Array.isArray(body.comboLegs) ? normalizeComboSelections(body.comboLegs as ComboSelection[]) : null;
+    const amount = parseGreaterThanZeroNumber(body.amount, "Amount");
+    const comboSummary = comboLegs ? summarizeComboLegs(amount, comboLegs) : null;
+    const rate = comboSummary ? comboSummary.rate : parseNonNegativeNumber(body.rate, "Rate");
     const sql = getSql();
     let record: RecordRow;
     try {

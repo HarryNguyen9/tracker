@@ -1,7 +1,8 @@
 /**
- * Combo bet calculation for creation: single amount, multiply all rates.
- * Outcome-based calculation is only done during confirmation.
+ * Combo calculation helpers for records with multiple independent legs.
  */
+import type { ComboLeg, ComboSelection, ComboSelectionOutcome, ResultType } from "./types";
+
 export type ComboBetResult = {
   finalRate: number;
   stake: number;
@@ -35,4 +36,93 @@ export function calculateComboBet(amount: number, rates: number[]): ComboBetResu
   const netProfit = returnAmount - amount;
 
   return { finalRate, stake: amount, returnAmount, netProfit };
+}
+
+export type ComboSummary = {
+  amount: number;
+  rate: number;
+  returnAmount: number;
+  profit: number;
+};
+
+export function resultTypeToComboOutcome(resultType: ResultType): ComboSelectionOutcome {
+  if (resultType === "win") return "WIN";
+  if (resultType === "win_half") return "HALF_WIN";
+  if (resultType === "draw") return "DRAW";
+  if (resultType === "loss_half") return "HALF_LOSE";
+  return "LOSE";
+}
+
+export function normalizeComboSelections(selections: ComboSelection[]): ComboLeg[] {
+  if (selections.length === 0) {
+    throw new Error("Select at least one combo leg.");
+  }
+
+  return selections.map((selection) => {
+    if (!Number.isFinite(selection.originalRate) || selection.originalRate <= 0) {
+      throw new Error("Each combo leg rate must be greater than zero.");
+    }
+
+    return {
+      rate: selection.originalRate,
+      outcome: null,
+      currentRate: null,
+      returnAmount: null,
+    };
+  });
+}
+
+function outcomeRate(leg: ComboLeg, resultType: ResultType) {
+  if (resultType === "loss") return 0;
+  if (resultType === "loss_half") return 0.5;
+  if (resultType === "draw") return 1;
+  if (resultType === "win_half") return roundRate((leg.rate + 1) / 2);
+  return leg.rate;
+}
+
+export function summarizeComboLegs(amount: number, legs: ComboLeg[]): ComboSummary {
+  const rate = legs.reduce((current, leg) => roundRate(current * (leg.currentRate ?? leg.rate)), 1);
+  const returnAmount = amount * rate;
+  const profit = legs.every((leg) => leg.outcome !== null) ? returnAmount - amount : 0;
+
+  return { amount, rate, returnAmount, profit };
+}
+
+export function applyComboOutcome(amount: number, legs: ComboLeg[], legIndex: number, resultType: ResultType) {
+  if (legIndex < 0 || legIndex >= legs.length) {
+    throw new Error("Combo leg was not found.");
+  }
+
+  const nextLegs = legs.map((leg, index) => {
+    if (index !== legIndex) {
+      return leg;
+    }
+
+    const currentRate = outcomeRate(leg, resultType);
+    const returnAmount = amount * currentRate;
+    return {
+      ...leg,
+      outcome: resultTypeToComboOutcome(resultType),
+      currentRate,
+      returnAmount,
+    };
+  });
+
+  const hasLose = nextLegs.some((leg) => leg.outcome === "LOSE");
+  const allWin = nextLegs.every((leg) => leg.outcome === "WIN");
+  const allResolved = nextLegs.every((leg) => leg.outcome !== null);
+  const summary = summarizeComboLegs(amount, nextLegs);
+
+  if (hasLose) {
+    return { legs: nextLegs, summary, finalized: true, resultType: "loss" as ResultType };
+  }
+  if (allWin) {
+    return { legs: nextLegs, summary, finalized: true, resultType: "win" as ResultType };
+  }
+  if (allResolved) {
+    const aggregateResultType = summary.profit > 0 ? "win" : summary.profit < 0 ? "loss" : "draw";
+    return { legs: nextLegs, summary, finalized: true, resultType: aggregateResultType as ResultType };
+  }
+
+  return { legs: nextLegs, summary, finalized: false, resultType: null };
 }

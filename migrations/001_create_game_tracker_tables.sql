@@ -19,6 +19,7 @@ create table if not exists records (
   note text,
   deleted_at timestamptz,
   delete_reason text,
+  combo_legs jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -57,6 +58,9 @@ alter table records
   add column if not exists delete_reason text;
 
 alter table records
+  add column if not exists combo_legs jsonb;
+
+alter table records
   alter column result_type drop not null;
 
 alter table records
@@ -88,6 +92,8 @@ alter table records
 create index if not exists records_player_id_created_at_idx on records (player_id, created_at);
 
 create index if not exists records_player_id_deleted_at_idx on records (player_id, deleted_at);
+
+create index if not exists records_combo_legs_idx on records using gin (combo_legs);
 
 alter table world_cup_matches
   add column if not exists provider text not null default 'football-data';

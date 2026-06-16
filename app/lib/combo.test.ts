@@ -1,11 +1,12 @@
-import { calculateComboBet } from "./combo";
+import { applyComboOutcome, calculateComboBet, normalizeComboSelections, summarizeComboLegs } from "./combo";
 
 function test(name: string, fn: () => void) {
   try {
     fn();
-    console.log(`  ✓ ${name}`);
-  } catch (e) {
-    console.error(`  ✗ ${name}:`, e);
+    console.log(`OK ${name}`);
+  } catch (error) {
+    console.error(`FAIL ${name}:`, error);
+    process.exitCode = 1;
   }
 }
 
@@ -13,67 +14,66 @@ function assert(condition: boolean, message: string) {
   if (!condition) throw new Error(message);
 }
 
-function assertApprox(actual: number, expected: number, tolerance = 0.0001, message?: string) {
+function assertApprox(actual: number, expected: number, tolerance = 0.0001) {
   if (Math.abs(actual - expected) > tolerance) {
-    throw new Error(message ?? `Expected ${expected} but got ${actual}`);
+    throw new Error(`Expected ${expected} but got ${actual}`);
   }
 }
 
-console.log("calculateComboBet tests:");
+console.log("combo tests");
 
-// Test 1: Basic combo - multiply rates
-test("basic combo - nhân các tỷ lệ", () => {
-  const result = calculateComboBet(100, [1.5, 2.0]);
-  assertApprox(result.finalRate, 3.0);
+test("all win multiplies rates", () => {
+  const legs = normalizeComboSelections([{ originalRate: 2 }, { originalRate: 1.8 }]);
+  const first = applyComboOutcome(100, legs, 0, "win");
+  const second = applyComboOutcome(100, first.legs, 1, "win");
+  assert(second.finalized, "combo should be finalized");
+  assert(second.resultType === "win", "combo should win");
+  assertApprox(second.summary.rate, 3.6);
+  assertApprox(second.summary.returnAmount, 360);
+  assertApprox(second.summary.profit, 260);
+});
+
+test("half win and half lose can draw", () => {
+  const legs = normalizeComboSelections([{ originalRate: 3 }, { originalRate: 1.8 }]);
+  const first = applyComboOutcome(100, legs, 0, "win_half");
+  const second = applyComboOutcome(100, first.legs, 1, "loss_half");
+  assert(second.finalized, "combo should be finalized");
+  assert(second.resultType === "draw", "combo should draw");
+  assertApprox(second.summary.rate, 1);
+  assertApprox(second.summary.returnAmount, 100);
+  assertApprox(second.summary.profit, 0);
+});
+
+test("draw leg applies rate one", () => {
+  const legs = normalizeComboSelections([{ originalRate: 2 }, { originalRate: 1.5 }]);
+  const first = applyComboOutcome(100, legs, 0, "draw");
+  const second = applyComboOutcome(100, first.legs, 1, "win");
+  assert(second.finalized, "combo should be finalized");
+  assert(second.resultType === "win", "combo should win");
+  assertApprox(second.summary.rate, 1.5);
+  assertApprox(second.summary.returnAmount, 150);
+});
+
+test("full loss finalizes immediately", () => {
+  const legs = normalizeComboSelections([{ originalRate: 2 }, { originalRate: 1.8 }]);
+  const result = applyComboOutcome(100, legs, 0, "loss");
+  assert(result.finalized, "combo should finalize on full loss");
+  assert(result.resultType === "loss", "combo should lose");
+  assertApprox(result.summary.rate, 0);
+});
+
+test("creation preview multiplies all rates", () => {
+  const result = calculateComboBet(100, [1.5, 2]);
+  assertApprox(result.finalRate, 3);
   assertApprox(result.returnAmount, 300);
   assertApprox(result.netProfit, 200);
-  assertApprox(result.stake, 100);
 });
 
-// Test 2: Three legs
-test("three legs - 1.8 * 2.0 * 1.5 = 5.4", () => {
-  const result = calculateComboBet(200, [1.8, 2.0, 1.5]);
-  assertApprox(result.finalRate, 5.4);
-  assertApprox(result.returnAmount, 1080);
-  assertApprox(result.netProfit, 880);
-  assertApprox(result.stake, 200);
+test("pending summary uses current rate for unresolved legs", () => {
+  const legs = normalizeComboSelections([{ originalRate: 2 }, { originalRate: 1.8 }]);
+  const first = applyComboOutcome(100, legs, 0, "win_half");
+  const summary = summarizeComboLegs(100, first.legs);
+  assertApprox(summary.rate, 2.7);
+  assertApprox(summary.returnAmount, 270);
+  assertApprox(summary.profit, 0);
 });
-
-// Test 3: Single leg
-test("single leg - giống cược đơn", () => {
-  const result = calculateComboBet(50, [2.5]);
-  assertApprox(result.finalRate, 2.5);
-  assertApprox(result.returnAmount, 125);
-  assertApprox(result.netProfit, 75);
-  assertApprox(result.stake, 50);
-});
-
-// Test 4: Zero amount
-test("zero amount - trả về 0", () => {
-  const result = calculateComboBet(0, [1.5, 2.0]);
-  assertApprox(result.finalRate, 3.0);
-  assertApprox(result.returnAmount, 0);
-  assertApprox(result.netProfit, 0);
-  assertApprox(result.stake, 0);
-});
-
-// Test 5: Empty rates - throw error
-test("rates rỗng - throw error", () => {
-  let threw = false;
-  try {
-    calculateComboBet(100, []);
-  } catch {
-    threw = true;
-  }
-  assert(threw, "Expected error for empty rates");
-});
-
-// Test 6: Rate = 0 edge case
-test("rate = 0 - finalRate = 0", () => {
-  const result = calculateComboBet(100, [2.0, 0, 1.5]);
-  assertApprox(result.finalRate, 0);
-  assertApprox(result.returnAmount, 0);
-  assertApprox(result.netProfit, -100);
-});
-
-console.log("\nAll tests passed!");

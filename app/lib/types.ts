@@ -52,7 +52,6 @@ export type ComboSelection = {
 
 export type ComboLeg = {
   rate: number;
-  amount: number;
   outcome: ComboSelectionOutcome | null;
   currentRate: number | null;
   returnAmount: number | null;

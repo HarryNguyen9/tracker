@@ -5,12 +5,13 @@ import { jsonError } from "../../../../lib/http";
 import { mapRecord } from "../../../../lib/mappers";
 import { ensureTrackerSchemaIfNeeded } from "../../../../lib/schema";
 import { calculateRecordValues, parseResultType } from "../../../../lib/validation";
-import { calculateComboBet } from "../../../../lib/combo";
+import { applyComboOutcome, summarizeComboLegs } from "../../../../lib/combo";
+import type { ComboLeg } from "../../../../lib/types";
 
 type Params = { params: { id: string } };
 type Sql = ReturnType<typeof getSql>;
 
-async function confirmStoredRecord(sql: Sql, id: string, resultType: ReturnType<typeof parseResultType>) {
+async function confirmStoredRecord(sql: Sql, id: string, resultType: ReturnType<typeof parseResultType>, legIndex: number | null) {
   const [existing] = (await sql`
     select id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, combo_legs, created_at, updated_at
     from records
@@ -23,34 +24,50 @@ async function confirmStoredRecord(sql: Sql, id: string, resultType: ReturnType<
   }
 
   const comboLegs = existing.combo_legs ? (typeof existing.combo_legs === "string" ? JSON.parse(existing.combo_legs) : existing.combo_legs) : null;
-  const amount = Number(existing.amount);
-
+  let finalAmount = Number(existing.amount);
+  let finalRate = Number(existing.rate);
   let finalReturnAmount: number;
   let finalProfit: number;
-  let finalResultType: string;
+  let finalResultType: string | null;
+  let finalStatus = "finalized";
+  let nextComboLegs = comboLegs;
 
   if (comboLegs && Array.isArray(comboLegs) && comboLegs.length > 0) {
-    // Combo: apply resultType to all legs and calculate
-    const rates = comboLegs.map((leg: { originalRate: number }) => leg.originalRate);
-    const comboResult = calculateComboBet(amount, rates);
-    finalReturnAmount = comboResult.returnAmount;
-    finalProfit = comboResult.netProfit;
-    finalResultType = comboResult.netProfit > 0 ? "win" : comboResult.netProfit < 0 ? "loss" : "draw";
+    if (legIndex === null) {
+      throw new Error("Combo leg is required.");
+    }
+    const comboResult = applyComboOutcome(finalAmount, comboLegs as ComboLeg[], legIndex, resultType);
+    nextComboLegs = comboResult.legs;
+    finalAmount = comboResult.summary.amount;
+    finalRate = comboResult.summary.rate;
+    finalReturnAmount = comboResult.finalized && comboResult.resultType === "loss" ? 0 : comboResult.finalized ? comboResult.summary.returnAmount : 0;
+    finalProfit = comboResult.finalized ? finalReturnAmount - comboResult.summary.amount : 0;
+    finalResultType = comboResult.resultType;
+    finalStatus = comboResult.finalized ? "finalized" : "pending";
   } else {
-    // Single bet
     const rate = Number(existing.rate);
+    const amount = Number(existing.amount);
     const { returnAmount, profit } = calculateRecordValues(amount, rate, resultType);
     finalReturnAmount = returnAmount;
     finalProfit = profit;
     finalResultType = resultType;
   }
 
+  if (nextComboLegs && Array.isArray(nextComboLegs) && finalStatus === "pending") {
+    const pendingSummary = summarizeComboLegs(finalAmount, nextComboLegs as ComboLeg[]);
+    finalAmount = pendingSummary.amount;
+    finalRate = pendingSummary.rate;
+  }
+
   const [record] = (await sql`
     update records
-    set status = 'finalized',
+    set amount = ${finalAmount},
+        rate = ${finalRate},
+        status = ${finalStatus},
         result_type = ${finalResultType},
         return_amount = ${finalReturnAmount},
         profit = ${finalProfit},
+        combo_legs = ${nextComboLegs ? JSON.stringify(nextComboLegs) : null},
         updated_at = now()
     where id = ${id}
     returning id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, combo_legs, created_at, updated_at
@@ -64,15 +81,16 @@ export async function PATCH(request: Request, { params }: Params) {
     requireEditAccess();
     const body = await request.json();
     const resultType = parseResultType(body.resultType);
+    const legIndex = typeof body.legIndex === "number" ? body.legIndex : null;
     const sql = getSql();
     let record: RecordRow | null;
     try {
-      record = await confirmStoredRecord(sql, params.id, resultType);
+      record = await confirmStoredRecord(sql, params.id, resultType, legIndex);
     } catch (error) {
       if (!(await ensureTrackerSchemaIfNeeded(error, sql))) {
         throw error;
       }
-      record = await confirmStoredRecord(sql, params.id, resultType);
+      record = await confirmStoredRecord(sql, params.id, resultType, legIndex);
     }
 
     if (!record) {

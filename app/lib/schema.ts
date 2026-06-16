@@ -61,6 +61,7 @@ async function applyTrackerSchema(sql: Sql) {
       note text,
       deleted_at timestamptz,
       delete_reason text,
+      combo_legs jsonb,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
     )
@@ -93,6 +94,7 @@ async function applyTrackerSchema(sql: Sql) {
   await sql`alter table records add column if not exists result_type text`;
   await sql`alter table records add column if not exists deleted_at timestamptz`;
   await sql`alter table records add column if not exists delete_reason text`;
+  await sql`alter table records add column if not exists combo_legs jsonb`;
   await sql`alter table records alter column result_type drop not null`;
   await sql`alter table records alter column result_type drop default`;
   await sql`update records set result_type = 'draw' where result_type = 'pu' || 'sh'`;
@@ -116,6 +118,7 @@ async function applyTrackerSchema(sql: Sql) {
   `;
   await sql`create index if not exists records_player_id_created_at_idx on records (player_id, created_at)`;
   await sql`create index if not exists records_player_id_deleted_at_idx on records (player_id, deleted_at)`;
+  await sql`create index if not exists records_combo_legs_idx on records using gin (combo_legs)`;
   await sql`alter table world_cup_matches add column if not exists provider text not null default 'football-data'`;
   await sql`alter table world_cup_matches add column if not exists provider_match_id text`;
   await sql`alter table world_cup_matches add column if not exists match_number integer`;

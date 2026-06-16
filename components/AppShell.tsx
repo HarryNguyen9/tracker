@@ -3,14 +3,26 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import { formatDate, formatMoney, formatNumber } from "../app/lib/format";
 import type { ComboSelection, ComboSelectionOutcome, PlayerSummary, RecordItem, RecordWithBalance, ResultType, WorldCupMatch } from "../app/lib/types";
-import { calculateComboBet } from "../app/lib/combo";
+import { normalizeComboSelections, summarizeComboLegs } from "../app/lib/combo";
 
 type LoadState = "idle" | "loading" | "ready" | "error";
 type RecordDraft = { amount: string; rate: string; note: string; comboMode: boolean; comboSelections: ComboSelection[] };
 type PendingUnlockAction = "player" | "record" | "confirm" | null;
 type PendingDelete = { type: "player"; player: PlayerSummary } | { type: "record"; record: RecordWithBalance } | null;
+type ScheduleTab = "schedule" | "knockout" | "groups";
+type GroupStanding = {
+  team: string;
+  played: number;
+  won: number;
+  drawn: number;
+  lost: number;
+  goalsFor: number;
+  goalsAgainst: number;
+  goalDifference: number;
+  points: number;
+};
 
-const comboOutcomeLabels: Record<string, string> = { WIN: "Win", HALF_WIN: "½ Win", DRAW: "Draw", HALF_LOSE: "½ Lose", LOSE: "Lose" };
+const comboOutcomeLabels: Record<string, string> = { WIN: "Win", HALF_WIN: "Half Win", DRAW: "Draw", HALF_LOSE: "Half Lose", LOSE: "Lose" };
 const comboOutcomeOptions: ComboSelectionOutcome[] = ["WIN", "HALF_WIN", "DRAW", "HALF_LOSE", "LOSE"];
 const emptyRecordDraft: RecordDraft = { amount: "", rate: "", note: "", comboMode: false, comboSelections: [] };
 const resultLabels: Record<ResultType, string> = { win: "Win", loss: "Loss", draw: "Draw", win_half: "Win Half", loss_half: "Loss Half" };
@@ -24,6 +36,14 @@ function getExpectedReturn(amount: number, rate: number) {
 function parseDraftNumber(value: string) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function resultTypeFromComboOutcome(outcome: ComboSelectionOutcome | null): ResultType {
+  if (outcome === "WIN") return "win";
+  if (outcome === "HALF_WIN") return "win_half";
+  if (outcome === "DRAW") return "draw";
+  if (outcome === "HALF_LOSE") return "loss_half";
+  return "loss";
 }
 
 type CsvValue = string | number | null | undefined;
@@ -90,6 +110,91 @@ function formatScheduleDay(value: string) {
 
 function cleanStage(value: string | null) {
   return value ? value.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase()) : "World Cup";
+}
+
+function isGroupMatch(match: WorldCupMatch) {
+  return match.groupName !== null || match.stage?.toUpperCase() === "GROUP_STAGE";
+}
+
+function hasFinalScore(match: WorldCupMatch): match is WorldCupMatch & { awayScore: number; awayTeam: string; homeScore: number; homeTeam: string } {
+  return match.status === "finished" && match.homeTeam !== null && match.awayTeam !== null && match.homeScore !== null && match.awayScore !== null;
+}
+
+function createStanding(team: string): GroupStanding {
+  return {
+    team,
+    played: 0,
+    won: 0,
+    drawn: 0,
+    lost: 0,
+    goalsFor: 0,
+    goalsAgainst: 0,
+    goalDifference: 0,
+    points: 0,
+  };
+}
+
+function applyStandingResult(standing: GroupStanding, goalsFor: number, goalsAgainst: number) {
+  standing.played += 1;
+  standing.goalsFor += goalsFor;
+  standing.goalsAgainst += goalsAgainst;
+  standing.goalDifference = standing.goalsFor - standing.goalsAgainst;
+
+  if (goalsFor > goalsAgainst) {
+    standing.won += 1;
+    standing.points += 3;
+    return;
+  }
+
+  if (goalsFor < goalsAgainst) {
+    standing.lost += 1;
+    return;
+  }
+
+  standing.drawn += 1;
+  standing.points += 1;
+}
+
+function buildGroupStandings(matches: WorldCupMatch[]) {
+  const groups = new Map<string, Map<string, GroupStanding>>();
+
+  matches.filter(isGroupMatch).forEach((match) => {
+    const groupName = match.groupName ?? cleanStage(match.stage);
+    const table = groups.get(groupName) ?? new Map<string, GroupStanding>();
+    groups.set(groupName, table);
+
+    if (match.homeTeam && !table.has(match.homeTeam)) {
+      table.set(match.homeTeam, createStanding(match.homeTeam));
+    }
+    if (match.awayTeam && !table.has(match.awayTeam)) {
+      table.set(match.awayTeam, createStanding(match.awayTeam));
+    }
+
+    if (!hasFinalScore(match)) {
+      return;
+    }
+
+    const homeStanding = table.get(match.homeTeam);
+    const awayStanding = table.get(match.awayTeam);
+    if (!homeStanding || !awayStanding) {
+      return;
+    }
+
+    applyStandingResult(homeStanding, match.homeScore, match.awayScore);
+    applyStandingResult(awayStanding, match.awayScore, match.homeScore);
+  });
+
+  return Array.from(groups.entries())
+    .map(([groupName, table]) => ({
+      groupName,
+      standings: Array.from(table.values()).sort((left, right) => {
+        if (right.points !== left.points) return right.points - left.points;
+        if (right.goalDifference !== left.goalDifference) return right.goalDifference - left.goalDifference;
+        if (right.goalsFor !== left.goalsFor) return right.goalsFor - left.goalsFor;
+        return left.team.localeCompare(right.team);
+      }),
+    }))
+    .sort((left, right) => left.groupName.localeCompare(right.groupName));
 }
 
 function applyClientBalance(items: RecordWithBalance[]) {
@@ -161,6 +266,7 @@ export default function AppShell() {
   const [pendingConfirmRecordId, setPendingConfirmRecordId] = useState<string | null>(null);
   const [confirmingRecordId, setConfirmingRecordId] = useState<string | null>(null);
   const [selectedResultType, setSelectedResultType] = useState<ResultType>("win");
+  const [selectedComboResults, setSelectedComboResults] = useState<Record<string, ResultType>>({});
   const [playerName, setPlayerName] = useState("");
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -195,9 +301,8 @@ export default function AppShell() {
     if (!draft.comboMode || draft.comboSelections.length === 0) return null;
     const amount = parseDraftNumber(draft.amount);
     if (amount <= 0) return null;
-    const rates = draft.comboSelections.map((s) => s.originalRate);
     try {
-      return calculateComboBet(amount, rates);
+      return summarizeComboLegs(amount, normalizeComboSelections(draft.comboSelections));
     } catch {
       return null;
     }
@@ -344,6 +449,19 @@ export default function AppShell() {
       console.error("Unable to refresh data", err);
       setError(err instanceof ApiError ? err.message : "Unable to refresh data. Please try again.");
     });
+  }
+
+  function comboResultKey(recordId: string, legIndex: number) {
+    return `${recordId}:${legIndex}`;
+  }
+
+  function selectedComboResult(record: RecordWithBalance, legIndex: number) {
+    const key = comboResultKey(record.id, legIndex);
+    return selectedComboResults[key] ?? resultTypeFromComboOutcome(record.comboLegs?.[legIndex]?.outcome ?? null);
+  }
+
+  function setSelectedComboResult(recordId: string, legIndex: number, resultType: ResultType) {
+    setSelectedComboResults((current) => ({ ...current, [comboResultKey(recordId, legIndex)]: resultType }));
   }
 
   useEffect(() => {
@@ -540,16 +658,11 @@ export default function AppShell() {
       const url = editingRecordId ? `/api/records/${editingRecordId}` : "/api/records";
       let payload: Record<string, unknown> = { note: draft.note, playerId: selectedId, amount: draft.amount };
       if (draft.comboMode && draft.comboSelections.length > 0) {
-        const amount = parseDraftNumber(draft.amount);
-        if (amount <= 0) {
-          setRecordError("Amount must be greater than 0 for combo bets.");
-          return;
-        }
         try {
+          const legs = normalizeComboSelections(draft.comboSelections);
           const amount = parseDraftNumber(draft.amount);
-          const rates = draft.comboSelections.map((s) => s.originalRate);
-          const result = calculateComboBet(amount, rates);
-          payload.rate = String(result.finalRate);
+          const result = summarizeComboLegs(amount, legs);
+          payload.rate = String(result.rate);
           payload.comboLegs = draft.comboSelections;
         } catch {
           setRecordError("Invalid combo selections.");
@@ -580,7 +693,7 @@ export default function AppShell() {
     });
   }
 
-  async function confirmRecord(recordId: string, resultType: ResultType) {
+  async function confirmRecord(recordId: string, resultType: ResultType, legIndex?: number) {
     if (!editMode) {
       setPendingConfirmRecordId(recordId);
       openPinFor("confirm");
@@ -592,11 +705,11 @@ export default function AppShell() {
         await fetch(`/api/records/${recordId}/confirm`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ resultType }),
+          body: JSON.stringify({ resultType, legIndex }),
         }),
       );
       setRecords((current) => upsertRecord(current, data.record));
-      if (previousRecord?.status === "pending") {
+      if (previousRecord?.status === "pending" && data.record.status === "finalized") {
         setPlayers((current) =>
           current.map((player) => (player.id === selectedId ? applyConfirmedRecordSummary(player, data.record) : player)),
         );
@@ -625,7 +738,13 @@ export default function AppShell() {
       return;
     }
     setEditingRecordId(record.id);
-    setDraft({ amount: String(record.amount), rate: String(record.rate), note: record.note ?? "", comboMode: false, comboSelections: [] });
+    setDraft({
+      amount: String(record.amount),
+      rate: String(record.rate),
+      note: record.note ?? "",
+      comboMode: Boolean(record.comboLegs?.length),
+      comboSelections: record.comboLegs?.map((leg) => ({ originalRate: leg.rate })) ?? [],
+    });
     setRecordFormOpen(true);
   }
 
@@ -938,18 +1057,40 @@ export default function AppShell() {
               {recordFormOpen && editMode ? (
                 <form className="rounded-2xl border border-slate-100 bg-slate-50 p-4 dark:border-white/10 dark:bg-white/[0.04]" onSubmit={(event) => event.preventDefault()}>
                   <div className="grid gap-3 sm:grid-cols-2">
-                    <Field label="Amount">
-                      <input
-                        className="input"
-                        inputMode="decimal"
-                        min="0"
-                        onChange={(event) => setDraft((current) => ({ ...current, amount: event.target.value }))}
-                        placeholder="100000"
-                        step="any"
-                        type="number"
-                        value={draft.amount}
-                      />
-                    </Field>
+                    <div className="sm:col-span-2">
+                      <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+                        <Field label="Amount">
+                          <input
+                            className="input"
+                            inputMode="decimal"
+                            min="0"
+                            onChange={(event) => setDraft((current) => ({ ...current, amount: event.target.value }))}
+                            placeholder="100000"
+                            step="any"
+                            type="number"
+                            value={draft.amount}
+                          />
+                        </Field>
+                        <div className="flex rounded-2xl border border-slate-200 bg-white p-1 dark:border-white/10 dark:bg-white/[0.04]">
+                          <button
+                            aria-pressed={!draft.comboMode}
+                            className={`rounded-xl px-4 py-3 text-sm font-bold transition active:scale-95 ${!draft.comboMode ? "bg-ink text-white dark:bg-emerald-500 dark:text-ink" : "text-slate-500 dark:text-slate-300"}`}
+                            onClick={() => setDraft((current) => ({ ...current, comboMode: false, comboSelections: [] }))}
+                            type="button"
+                          >
+                            Single
+                          </button>
+                          <button
+                            aria-pressed={draft.comboMode}
+                            className={`rounded-xl px-4 py-3 text-sm font-bold transition active:scale-95 ${draft.comboMode ? "bg-emerald-600 text-white" : "text-slate-500 dark:text-slate-300"}`}
+                            onClick={() => setDraft((current) => ({ ...current, comboMode: true }))}
+                            type="button"
+                          >
+                            Combo
+                          </button>
+                        </div>
+                      </div>
+                    </div>
                     <div className="rounded-2xl border border-slate-100 bg-white p-3 dark:border-white/10 dark:bg-white/[0.04] sm:col-span-2">
                       <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Quick Add Amount</p>
                       <div className="mt-3 grid grid-cols-5 gap-2">
@@ -984,18 +1125,19 @@ export default function AppShell() {
                     </div>
                     {draft.comboMode ? (
                       <div className="rounded-2xl border border-slate-100 bg-white p-3 dark:border-white/10 dark:bg-white/[0.04] sm:col-span-2">
-                        <div className="mb-2 flex items-center justify-between">
+                        <div className="mb-2 flex items-center justify-between gap-3">
                           <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Combo Selections</p>
                           <button
-                            className="rounded-xl bg-rose-100 px-2 py-1 text-xs font-bold text-rose-700 active:scale-95 dark:bg-rose-400/20 dark:text-rose-200"
-                            onClick={() => setDraft((current) => ({ ...current, comboMode: false, comboSelections: [] }))}
+                            className="rounded-xl border border-dashed border-slate-300 px-3 py-2 text-xs font-bold text-slate-500 active:scale-95 dark:border-white/20 dark:text-slate-300"
+                            onClick={() => setDraft((current) => ({ ...current, comboSelections: [...current.comboSelections, { originalRate: 0 }] }))}
                             type="button"
                           >
-                            Disable Combo
+                            + Add Leg
                           </button>
                         </div>
                         {draft.comboSelections.map((sel, idx) => (
-                          <div className="mb-2 grid grid-cols-[1fr_1fr_auto_auto] gap-2" key={idx}>
+                          <div className="mb-2 grid grid-cols-[auto_1fr_auto] items-center gap-2 rounded-2xl border border-slate-100 bg-slate-50 p-2 dark:border-white/10 dark:bg-[#121d19]" key={idx}>
+                            <span className="flex size-9 items-center justify-center rounded-full bg-white text-xs font-black text-slate-500 dark:bg-white/10 dark:text-slate-300">{idx + 1}</span>
                             <input
                               className="input"
                               inputMode="decimal"
@@ -1012,7 +1154,8 @@ export default function AppShell() {
                               value={sel.originalRate || ""}
                             />
                             <button
-                              className="rounded-xl bg-rose-50 px-2 text-sm font-bold text-rose-700 active:scale-95 dark:bg-rose-400/10 dark:text-rose-200"
+                              aria-label={`Remove leg ${idx + 1}`}
+                              className="flex size-10 items-center justify-center rounded-xl bg-rose-50 text-sm font-bold text-rose-700 active:scale-95 dark:bg-rose-400/10 dark:text-rose-200"
                               onClick={() => {
                                 const updated = draft.comboSelections.filter((_, i) => i !== idx);
                                 setDraft((current) => ({ ...current, comboSelections: updated }));
@@ -1023,13 +1166,6 @@ export default function AppShell() {
                             </button>
                           </div>
                         ))}
-                        <button
-                          className="w-full rounded-xl border border-dashed border-slate-300 py-2 text-sm font-bold text-slate-500 active:scale-95 dark:border-white/20 dark:text-slate-400"
-                          onClick={() => setDraft((current) => ({ ...current, comboSelections: [...current.comboSelections, { originalRate: 0 }] }))}
-                          type="button"
-                        >
-                          + Add Selection
-                        </button>
                         {draftComboResult && draft.comboSelections.length > 0 ? (
                           <div className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50 p-3 text-sm dark:border-emerald-400/20 dark:bg-emerald-400/10">
                             <p className="text-xs font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Combo Breakdown</p>
@@ -1039,10 +1175,10 @@ export default function AppShell() {
                                   Leg {i + 1}: Rate {sel.originalRate.toFixed(4)}
                                 </p>
                               ))}
-                              <p className="font-bold text-emerald-900 dark:text-emerald-100">Stake: {formatMoney(draftComboResult.stake)}</p>
-                              <p className="font-bold text-emerald-900 dark:text-emerald-100">Final Rate: {draftComboResult.finalRate.toFixed(4)}</p>
+                              <p className="font-bold text-emerald-900 dark:text-emerald-100">Amount: {formatMoney(draftComboResult.amount)}</p>
+                              <p className="font-bold text-emerald-900 dark:text-emerald-100">Final Rate: {draftComboResult.rate.toFixed(4)}</p>
                               <p className="font-bold text-emerald-900 dark:text-emerald-100">Return: {formatMoney(draftComboResult.returnAmount)}</p>
-                              <p className="font-bold text-emerald-900 dark:text-emerald-100">Net Profit: {formatMoney(draftComboResult.netProfit)}</p>
+                              <p className="font-bold text-emerald-900 dark:text-emerald-100">Current Profit: {formatMoney(draftComboResult.profit)}</p>
                             </div>
                           </div>
                         ) : null}
@@ -1073,7 +1209,7 @@ export default function AppShell() {
                         </Field>
                       </div>
                       <button
-                        className={`mt-6 whitespace-nowrap rounded-2xl px-4 py-3 text-sm font-bold active:scale-95 ${draft.comboMode ? "bg-emerald-600 text-white" : "border border-slate-200 bg-white text-ink dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-50"}`}
+                        className="hidden"
                         onClick={() => setDraft((current) => ({ ...current, comboMode: !current.comboMode, comboSelections: current.comboMode ? [] : current.comboSelections }))}
                         type="button"
                       >
@@ -1152,6 +1288,7 @@ export default function AppShell() {
                       <MiniMetric label="Profit" value={record.status === "pending" ? "-" : formatMoney(record.profit)} />
                       <MiniMetric label="Balance" value={record.balance === null ? "-" : formatMoney(record.balance)} />
                     </div>
+                    {record.comboLegs?.length ? <ComboLegDetails record={record} /> : null}
                     {record.status === "pending" ? (
                       <div className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
                         {confirmingRecordId === record.id ? (
@@ -1178,15 +1315,64 @@ export default function AppShell() {
                                 })}
                               </div>
                             </div>
-                            <div className="flex gap-2">
-                              <button
-                                className="flex-1 rounded-2xl bg-emerald-600 py-3 font-bold text-white active:scale-95"
-                                disabled={busy}
-                                onClick={() => confirmRecord(record.id, selectedResultType)}
-                                type="button"
-                              >
-                                Confirm
-                              </button>
+                            {record.comboLegs?.length ? (
+                              <div className="grid gap-3">
+                                {record.comboLegs.map((leg, index) => {
+                                  const selectedLegResult = selectedComboResult(record, index);
+                                  return (
+                                    <div className="rounded-2xl border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-[#121d19]" key={index}>
+                                      <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <div>
+                                          <p className="text-sm font-black">Leg {index + 1}</p>
+                                          <p className="text-xs font-bold text-slate-500 dark:text-slate-400">Rate {formatNumber(leg.rate)}</p>
+                                        </div>
+                                        <span className={`rounded-full px-3 py-1 text-xs font-bold ${leg.outcome ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200" : "bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-200"}`}>
+                                          {leg.outcome ? comboOutcomeLabels[leg.outcome] : "Pending"}
+                                        </span>
+                                      </div>
+                                      <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
+                                        <select
+                                          className="input min-h-11"
+                                          disabled={busy || leg.outcome !== null}
+                                          onChange={(event) => setSelectedComboResult(record.id, index, event.target.value as ResultType)}
+                                          value={selectedLegResult}
+                                        >
+                                          {resultOptions.map((resultType) => (
+                                            <option key={resultType} value={resultType}>
+                                              {resultLabels[resultType]}
+                                            </option>
+                                          ))}
+                                        </select>
+                                        <button
+                                          className="rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+                                          disabled={busy || leg.outcome !== null}
+                                          onClick={() => confirmRecord(record.id, selectedLegResult, index)}
+                                          type="button"
+                                        >
+                                          {leg.outcome ? "Confirmed" : "Confirm"}
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                                <button
+                                  className="rounded-2xl bg-slate-200 px-4 py-3 font-bold dark:bg-white/10"
+                                  onClick={() => setConfirmingRecordId(null)}
+                                  type="button"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex gap-2">
+                                <button
+                                  className="flex-1 rounded-2xl bg-emerald-600 py-3 font-bold text-white active:scale-95"
+                                  disabled={busy}
+                                  onClick={() => confirmRecord(record.id, selectedResultType)}
+                                  type="button"
+                                >
+                                  Confirm
+                                </button>
                               <button
                                 className="rounded-2xl bg-slate-200 px-4 py-3 font-bold dark:bg-white/10"
                                 onClick={() => setConfirmingRecordId(null)}
@@ -1194,7 +1380,8 @@ export default function AppShell() {
                               >
                                 Cancel
                               </button>
-                            </div>
+                              </div>
+                            )}
                           </div>
                         ) : (
                           <button
@@ -1400,18 +1587,40 @@ export default function AppShell() {
               {recordFormOpen && editMode ? (
                 <form className="mb-4 rounded-2xl border border-slate-100 bg-slate-50 p-4 dark:border-white/10 dark:bg-white/[0.04]" onSubmit={(event) => event.preventDefault()}>
                   <div className="grid gap-3 sm:grid-cols-2">
-                    <Field label="Amount">
-                      <input
-                        className="input"
-                        inputMode="decimal"
-                        min="0"
-                        onChange={(event) => setDraft((current) => ({ ...current, amount: event.target.value }))}
-                        placeholder="100000"
-                        step="any"
-                        type="number"
-                        value={draft.amount}
-                      />
-                    </Field>
+                    <div className="sm:col-span-2">
+                      <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+                        <Field label="Amount">
+                          <input
+                            className="input"
+                            inputMode="decimal"
+                            min="0"
+                            onChange={(event) => setDraft((current) => ({ ...current, amount: event.target.value }))}
+                            placeholder="100000"
+                            step="any"
+                            type="number"
+                            value={draft.amount}
+                          />
+                        </Field>
+                        <div className="flex rounded-2xl border border-slate-200 bg-white p-1 dark:border-white/10 dark:bg-white/[0.04]">
+                          <button
+                            aria-pressed={!draft.comboMode}
+                            className={`rounded-xl px-4 py-3 text-sm font-bold transition active:scale-95 ${!draft.comboMode ? "bg-ink text-white dark:bg-emerald-500 dark:text-ink" : "text-slate-500 dark:text-slate-300"}`}
+                            onClick={() => setDraft((current) => ({ ...current, comboMode: false, comboSelections: [] }))}
+                            type="button"
+                          >
+                            Single
+                          </button>
+                          <button
+                            aria-pressed={draft.comboMode}
+                            className={`rounded-xl px-4 py-3 text-sm font-bold transition active:scale-95 ${draft.comboMode ? "bg-emerald-600 text-white" : "text-slate-500 dark:text-slate-300"}`}
+                            onClick={() => setDraft((current) => ({ ...current, comboMode: true }))}
+                            type="button"
+                          >
+                            Combo
+                          </button>
+                        </div>
+                      </div>
+                    </div>
                     <div className="rounded-2xl border border-slate-100 bg-white p-3 dark:border-white/10 dark:bg-white/[0.04] sm:col-span-2">
                       <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Quick Add Amount</p>
                       <div className="mt-3 grid grid-cols-5 gap-2">
@@ -1446,18 +1655,19 @@ export default function AppShell() {
                     </div>
                     {draft.comboMode ? (
                       <div className="rounded-2xl border border-slate-100 bg-white p-3 dark:border-white/10 dark:bg-white/[0.04] sm:col-span-2">
-                        <div className="mb-2 flex items-center justify-between">
+                        <div className="mb-2 flex items-center justify-between gap-3">
                           <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Combo Selections</p>
                           <button
-                            className="rounded-xl bg-rose-100 px-2 py-1 text-xs font-bold text-rose-700 active:scale-95 dark:bg-rose-400/20 dark:text-rose-200"
-                            onClick={() => setDraft((current) => ({ ...current, comboMode: false, comboSelections: [] }))}
+                            className="rounded-xl border border-dashed border-slate-300 px-3 py-2 text-xs font-bold text-slate-500 active:scale-95 dark:border-white/20 dark:text-slate-300"
+                            onClick={() => setDraft((current) => ({ ...current, comboSelections: [...current.comboSelections, { originalRate: 0 }] }))}
                             type="button"
                           >
-                            Disable Combo
+                            + Add Leg
                           </button>
                         </div>
                         {draft.comboSelections.map((sel, idx) => (
-                          <div className="mb-2 grid grid-cols-[1fr_1fr_auto_auto] gap-2" key={idx}>
+                          <div className="mb-2 grid grid-cols-[auto_1fr_auto] items-center gap-2 rounded-2xl border border-slate-100 bg-slate-50 p-2 dark:border-white/10 dark:bg-[#121d19]" key={idx}>
+                            <span className="flex size-9 items-center justify-center rounded-full bg-white text-xs font-black text-slate-500 dark:bg-white/10 dark:text-slate-300">{idx + 1}</span>
                             <input
                               className="input"
                               inputMode="decimal"
@@ -1474,7 +1684,8 @@ export default function AppShell() {
                               value={sel.originalRate || ""}
                             />
                             <button
-                              className="rounded-xl bg-rose-50 px-2 text-sm font-bold text-rose-700 active:scale-95 dark:bg-rose-400/10 dark:text-rose-200"
+                              aria-label={`Remove leg ${idx + 1}`}
+                              className="flex size-10 items-center justify-center rounded-xl bg-rose-50 text-sm font-bold text-rose-700 active:scale-95 dark:bg-rose-400/10 dark:text-rose-200"
                               onClick={() => {
                                 const updated = draft.comboSelections.filter((_, i) => i !== idx);
                                 setDraft((current) => ({ ...current, comboSelections: updated }));
@@ -1485,13 +1696,6 @@ export default function AppShell() {
                             </button>
                           </div>
                         ))}
-                        <button
-                          className="w-full rounded-xl border border-dashed border-slate-300 py-2 text-sm font-bold text-slate-500 active:scale-95 dark:border-white/20 dark:text-slate-400"
-                          onClick={() => setDraft((current) => ({ ...current, comboSelections: [...current.comboSelections, { originalRate: 0 }] }))}
-                          type="button"
-                        >
-                          + Add Selection
-                        </button>
                         {draftComboResult && draft.comboSelections.length > 0 ? (
                           <div className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50 p-3 text-sm dark:border-emerald-400/20 dark:bg-emerald-400/10">
                             <p className="text-xs font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Combo Breakdown</p>
@@ -1501,10 +1705,10 @@ export default function AppShell() {
                                   Leg {i + 1}: Rate {sel.originalRate.toFixed(4)}
                                 </p>
                               ))}
-                              <p className="font-bold text-emerald-900 dark:text-emerald-100">Stake: {formatMoney(draftComboResult.stake)}</p>
-                              <p className="font-bold text-emerald-900 dark:text-emerald-100">Final Rate: {draftComboResult.finalRate.toFixed(4)}</p>
+                              <p className="font-bold text-emerald-900 dark:text-emerald-100">Amount: {formatMoney(draftComboResult.amount)}</p>
+                              <p className="font-bold text-emerald-900 dark:text-emerald-100">Final Rate: {draftComboResult.rate.toFixed(4)}</p>
                               <p className="font-bold text-emerald-900 dark:text-emerald-100">Return: {formatMoney(draftComboResult.returnAmount)}</p>
-                              <p className="font-bold text-emerald-900 dark:text-emerald-100">Net Profit: {formatMoney(draftComboResult.netProfit)}</p>
+                              <p className="font-bold text-emerald-900 dark:text-emerald-100">Current Profit: {formatMoney(draftComboResult.profit)}</p>
                             </div>
                           </div>
                         ) : null}
@@ -1535,7 +1739,7 @@ export default function AppShell() {
                         </Field>
                       </div>
                       <button
-                        className={`mt-6 whitespace-nowrap rounded-2xl px-4 py-3 text-sm font-bold active:scale-95 ${draft.comboMode ? "bg-emerald-600 text-white" : "border border-slate-200 bg-white text-ink dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-50"}`}
+                        className="hidden"
                         onClick={() => setDraft((current) => ({ ...current, comboMode: !current.comboMode, comboSelections: current.comboMode ? [] : current.comboSelections }))}
                         type="button"
                       >
@@ -1614,6 +1818,7 @@ export default function AppShell() {
                       <MiniMetric label="Profit" value={record.status === "pending" ? "-" : formatMoney(record.profit)} />
                       <MiniMetric label="Balance" value={record.balance === null ? "-" : formatMoney(record.balance)} />
                     </div>
+                    {record.comboLegs?.length ? <ComboLegDetails record={record} /> : null}
                     {record.status === "pending" ? (
                       <div className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
                         {confirmingRecordId === record.id ? (
@@ -1640,15 +1845,64 @@ export default function AppShell() {
                                 })}
                               </div>
                             </div>
-                            <div className="flex gap-2">
-                              <button
-                                className="flex-1 rounded-2xl bg-emerald-600 py-3 font-bold text-white active:scale-95"
-                                disabled={busy}
-                                onClick={() => confirmRecord(record.id, selectedResultType)}
-                                type="button"
-                              >
-                                Confirm
-                              </button>
+                            {record.comboLegs?.length ? (
+                              <div className="grid gap-3">
+                                {record.comboLegs.map((leg, index) => {
+                                  const selectedLegResult = selectedComboResult(record, index);
+                                  return (
+                                    <div className="rounded-2xl border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-[#121d19]" key={index}>
+                                      <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <div>
+                                          <p className="text-sm font-black">Leg {index + 1}</p>
+                                          <p className="text-xs font-bold text-slate-500 dark:text-slate-400">Rate {formatNumber(leg.rate)}</p>
+                                        </div>
+                                        <span className={`rounded-full px-3 py-1 text-xs font-bold ${leg.outcome ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200" : "bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-200"}`}>
+                                          {leg.outcome ? comboOutcomeLabels[leg.outcome] : "Pending"}
+                                        </span>
+                                      </div>
+                                      <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
+                                        <select
+                                          className="input min-h-11"
+                                          disabled={busy || leg.outcome !== null}
+                                          onChange={(event) => setSelectedComboResult(record.id, index, event.target.value as ResultType)}
+                                          value={selectedLegResult}
+                                        >
+                                          {resultOptions.map((resultType) => (
+                                            <option key={resultType} value={resultType}>
+                                              {resultLabels[resultType]}
+                                            </option>
+                                          ))}
+                                        </select>
+                                        <button
+                                          className="rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+                                          disabled={busy || leg.outcome !== null}
+                                          onClick={() => confirmRecord(record.id, selectedLegResult, index)}
+                                          type="button"
+                                        >
+                                          {leg.outcome ? "Confirmed" : "Confirm"}
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                                <button
+                                  className="rounded-2xl bg-slate-200 px-4 py-3 font-bold dark:bg-white/10"
+                                  onClick={() => setConfirmingRecordId(null)}
+                                  type="button"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex gap-2">
+                                <button
+                                  className="flex-1 rounded-2xl bg-emerald-600 py-3 font-bold text-white active:scale-95"
+                                  disabled={busy}
+                                  onClick={() => confirmRecord(record.id, selectedResultType)}
+                                  type="button"
+                                >
+                                  Confirm
+                                </button>
                               <button
                                 className="rounded-2xl bg-slate-200 px-4 py-3 font-bold dark:bg-white/10"
                                 onClick={() => setConfirmingRecordId(null)}
@@ -1656,7 +1910,8 @@ export default function AppShell() {
                               >
                                 Cancel
                               </button>
-                            </div>
+                              </div>
+                            )}
                           </div>
                         ) : (
                           <button
@@ -1844,18 +2099,30 @@ function getCountryCode(teamName: string | null): string | null {
   return COUNTRY_CODE_MAP[teamName] ?? null;
 }
 
+const SPECIAL_FLAG_MAP: Record<string, string> = {
+  "gb-eng": "🏴",
+  "gb-sct": "🏴",
+  "gb-wls": "🏴",
+};
+
+function countryFlagEmoji(code: string) {
+  if (SPECIAL_FLAG_MAP[code]) {
+    return SPECIAL_FLAG_MAP[code];
+  }
+  if (!/^[a-z]{2}$/.test(code)) {
+    return "🏳️";
+  }
+  return code
+    .toUpperCase()
+    .split("")
+    .map((letter) => String.fromCodePoint(127397 + letter.charCodeAt(0)))
+    .join("");
+}
+
 function TeamFlag({ team }: { team: string | null }) {
   const code = getCountryCode(team);
   if (!code) return null;
-  return (
-    <img
-      alt={`${team} flag`}
-      className="inline-block h-5 w-7 rounded-sm object-cover shadow-sm"
-      loading="lazy"
-      src={`https://flagcdn.com/w40/${code}.png`}
-      srcSet={`https://flagcdn.com/w80/${code}.png 2x`}
-    />
-  );
+  return <span aria-label={`${team} flag`} className="text-xl leading-none">{countryFlagEmoji(code)}</span>;
 }
 
 function ScheduleDialog({
@@ -1873,6 +2140,8 @@ function ScheduleDialog({
   onCancel: () => void;
   onSync: () => void;
 }) {
+  const [activeTab, setActiveTab] = useState<ScheduleTab>("schedule");
+
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -1886,6 +2155,13 @@ function ScheduleDialog({
     groups[key] = [...(groups[key] ?? []), match];
     return groups;
   }, {});
+  const knockoutMatches = matches.filter((match) => !isGroupMatch(match));
+  const groupStandings = buildGroupStandings(matches);
+  const scheduleTabs: { id: ScheduleTab; label: string }[] = [
+    { id: "schedule", label: "Schedule" },
+    { id: "knockout", label: "Knockout" },
+    { id: "groups", label: "Groups" },
+  ];
 
   return (
     <div className="fixed inset-0 z-50 flex items-end bg-ink/60 p-4 backdrop-blur-sm sm:items-center sm:justify-center">
@@ -1917,8 +2193,23 @@ function ScheduleDialog({
         {loading && matches.length === 0 ? <p className="mt-5 rounded-2xl bg-slate-100 p-4 text-sm font-semibold dark:bg-white/10">Loading schedule...</p> : null}
         {!loading && matches.length === 0 ? <p className="mt-5 rounded-2xl bg-slate-100 p-4 text-sm font-semibold dark:bg-white/10">No World Cup matches loaded yet.</p> : null}
 
+        {matches.length > 0 ? (
+          <div className="mt-5 grid grid-cols-3 gap-2 rounded-2xl bg-slate-100 p-1 dark:bg-white/10">
+            {scheduleTabs.map((tab) => (
+              <button
+                className={`rounded-xl px-3 py-2 text-sm font-black transition ${activeTab === tab.id ? "bg-white text-emerald-700 shadow-sm dark:bg-[#0b1511] dark:text-emerald-300" : "text-slate-500 hover:text-ink dark:text-slate-400 dark:hover:text-white"}`}
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                type="button"
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
         <div className="mt-5 flex max-h-[64vh] flex-col gap-5 overflow-y-auto pr-1">
-          {Object.entries(groupedMatches).map(([day, dayMatches]) => (
+          {activeTab === "schedule" ? Object.entries(groupedMatches).map(([day, dayMatches]) => (
             <section key={day}>
               <h3 className="sticky top-0 z-10 rounded-2xl border border-slate-100 bg-white/95 px-3 py-2 text-sm font-black text-slate-700 backdrop-blur dark:border-white/10 dark:bg-[#121d19]/95 dark:text-slate-200">
                 {day}
@@ -1960,9 +2251,119 @@ function ScheduleDialog({
                 ))}
               </div>
             </section>
-          ))}
+          )) : null}
+          {activeTab === "knockout" ? <KnockoutView matches={knockoutMatches} /> : null}
+          {activeTab === "groups" ? <GroupStandingsView groups={groupStandings} /> : null}
         </div>
       </section>
+    </div>
+  );
+}
+
+function KnockoutView({ matches }: { matches: WorldCupMatch[] }) {
+  if (matches.length === 0) {
+    return <p className="rounded-2xl bg-slate-100 p-4 text-sm font-semibold dark:bg-white/10">No knockout matches loaded yet.</p>;
+  }
+
+  const matchesByStage = matches.reduce<Record<string, WorldCupMatch[]>>((groups, match) => {
+    const stage = cleanStage(match.stage);
+    groups[stage] = [...(groups[stage] ?? []), match];
+    return groups;
+  }, {});
+
+  return (
+    <>
+      {Object.entries(matchesByStage).map(([stage, stageMatches]) => (
+        <section key={stage}>
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h3 className="text-sm font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">{stage}</h3>
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600 dark:bg-white/10 dark:text-slate-300">{stageMatches.length} matches</span>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {stageMatches.map((match) => (
+              <article className="rounded-3xl border border-slate-100 bg-slate-50 p-4 dark:border-white/10 dark:bg-white/[0.04]" key={match.id}>
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                    {match.kickoffAt ? formatScheduleDate(match.kickoffAt) : "Kickoff TBA"}
+                  </p>
+                  <WorldCupStatusBadge status={match.status} />
+                </div>
+                <div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+                  <KnockoutTeam align="right" name={match.homeTeam} />
+                  <div className="rounded-2xl bg-white px-4 py-3 text-center text-lg font-black shadow-sm dark:bg-[#121d19]">
+                    {match.homeScore === null || match.awayScore === null ? "vs" : `${match.homeScore} - ${match.awayScore}`}
+                  </div>
+                  <KnockoutTeam align="left" name={match.awayTeam} />
+                </div>
+                {match.winner ? <p className="mt-4 rounded-2xl bg-emerald-50 px-3 py-2 text-center text-sm font-bold text-emerald-800 dark:bg-emerald-400/10 dark:text-emerald-200">Winner: {match.winner}</p> : null}
+              </article>
+            ))}
+          </div>
+        </section>
+      ))}
+    </>
+  );
+}
+
+function KnockoutTeam({ align, name }: { align: "left" | "right"; name: string | null }) {
+  return (
+    <div className={`flex min-w-0 items-center gap-2 ${align === "right" ? "justify-end" : ""}`}>
+      {align === "left" ? <TeamFlag team={name} /> : null}
+      <p className={`min-w-0 break-words text-base font-black ${align === "right" ? "text-right" : ""}`}>{name ?? "TBA"}</p>
+      {align === "right" ? <TeamFlag team={name} /> : null}
+    </div>
+  );
+}
+
+function GroupStandingsView({ groups }: { groups: { groupName: string; standings: GroupStanding[] }[] }) {
+  if (groups.length === 0) {
+    return <p className="rounded-2xl bg-slate-100 p-4 text-sm font-semibold dark:bg-white/10">No group standings loaded yet.</p>;
+  }
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      {groups.map((group) => (
+        <section className="overflow-hidden rounded-3xl border border-slate-100 bg-slate-50 dark:border-white/10 dark:bg-white/[0.04]" key={group.groupName}>
+          <div className="flex items-center justify-between gap-3 border-b border-slate-100 bg-white px-4 py-3 dark:border-white/10 dark:bg-[#121d19]">
+            <h3 className="font-black">{group.groupName}</h3>
+            <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200">Standings</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[520px] text-sm">
+              <thead className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                <tr>
+                  <th className="px-4 py-3 text-left">Team</th>
+                  <th className="px-2 py-3 text-center">P</th>
+                  <th className="px-2 py-3 text-center">W</th>
+                  <th className="px-2 py-3 text-center">D</th>
+                  <th className="px-2 py-3 text-center">L</th>
+                  <th className="px-2 py-3 text-center">GD</th>
+                  <th className="px-4 py-3 text-center">Pts</th>
+                </tr>
+              </thead>
+              <tbody>
+                {group.standings.map((standing, index) => (
+                  <tr className="border-t border-slate-100 dark:border-white/10" key={standing.team}>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <span className="flex size-7 items-center justify-center rounded-full bg-white text-xs font-black text-slate-500 dark:bg-white/10 dark:text-slate-300">{index + 1}</span>
+                        <TeamFlag team={standing.team} />
+                        <span className="font-black">{standing.team}</span>
+                      </div>
+                    </td>
+                    <td className="px-2 py-3 text-center font-bold">{standing.played}</td>
+                    <td className="px-2 py-3 text-center font-bold">{standing.won}</td>
+                    <td className="px-2 py-3 text-center font-bold">{standing.drawn}</td>
+                    <td className="px-2 py-3 text-center font-bold">{standing.lost}</td>
+                    <td className="px-2 py-3 text-center font-bold">{standing.goalDifference}</td>
+                    <td className="px-4 py-3 text-center text-base font-black text-emerald-700 dark:text-emerald-300">{standing.points}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ))}
     </div>
   );
 }
@@ -2109,6 +2510,7 @@ function FinalizedRecordsDialog({
                       <MiniMetric label="Balance" value={record.balance === null ? "-" : formatMoney(record.balance)} />
                       <MiniMetric label="Status" value="Finalized" />
                     </div>
+                    {record.comboLegs?.length ? <ComboLegDetails record={record} /> : null}
                     {record.note ? (
                       <div className="mt-3 rounded-2xl bg-slate-50 p-3 text-sm dark:bg-white/[0.04]">
                         <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Note</p>
@@ -2170,6 +2572,35 @@ function MiniMetric({ label, value }: { label: string; value: string }) {
     <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
       <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</p>
       <p className="mt-1 break-words font-bold text-ink dark:text-slate-50">{value}</p>
+    </div>
+  );
+}
+
+function ComboLegDetails({ record }: { record: RecordWithBalance }) {
+  if (!record.comboLegs?.length) {
+    return null;
+  }
+
+  return (
+    <div className="mt-4 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Combo Legs</p>
+        <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-slate-500 dark:bg-white/10 dark:text-slate-300">{record.comboLegs.length} legs</span>
+      </div>
+      <div className="mt-3 overflow-hidden rounded-2xl border border-slate-100 bg-white dark:border-white/10 dark:bg-[#121d19]">
+        {record.comboLegs.map((leg, index) => (
+          <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3 border-b border-slate-100 p-3 last:border-b-0 dark:border-white/10" key={index}>
+            <span className="flex size-8 items-center justify-center rounded-full bg-slate-100 text-xs font-black text-slate-600 dark:bg-white/10 dark:text-slate-300">{index + 1}</span>
+            <div className="min-w-0">
+              <p className="font-bold">Rate {formatNumber(leg.rate)}</p>
+              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Applied {leg.currentRate === null ? "-" : formatNumber(leg.currentRate)}</p>
+            </div>
+            <span className={`rounded-full px-3 py-1 text-xs font-bold ${leg.outcome ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200" : "bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-200"}`}>
+              {comboOutcomeLabels[leg.outcome ?? ""] ?? "Pending"}
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
