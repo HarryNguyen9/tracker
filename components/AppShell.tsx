@@ -28,6 +28,7 @@ const emptyRecordDraft: RecordDraft = { amount: "", rate: "", note: "", comboMod
 const resultLabels: Record<ResultType, string> = { win: "Win", loss: "Loss", draw: "Draw", win_half: "Win Half", loss_half: "Loss Half" };
 const resultOptions: ResultType[] = ["win", "win_half", "draw", "loss_half", "loss"];
 const quickAmountIncrements = [1, 2, 5, 10, 20];
+type ComboResultChoice = ResultType | "";
 
 function getExpectedReturn(amount: number, rate: number) {
   return amount * rate;
@@ -38,12 +39,26 @@ function parseDraftNumber(value: string) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function resultTypeFromComboOutcome(outcome: ComboSelectionOutcome | null): ResultType {
+function resultTypeFromComboOutcome(outcome: ComboSelectionOutcome | null): ComboResultChoice {
+  if (outcome === null) return "";
   if (outcome === "WIN") return "win";
   if (outcome === "HALF_WIN") return "win_half";
   if (outcome === "DRAW") return "draw";
   if (outcome === "HALF_LOSE") return "loss_half";
   return "loss";
+}
+
+function comboOutcomeBadgeClass(outcome: ComboSelectionOutcome | null) {
+  if (outcome === "WIN" || outcome === "HALF_WIN") {
+    return "bg-emerald-100 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200";
+  }
+  if (outcome === "DRAW") {
+    return "bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-200";
+  }
+  if (outcome === "LOSE" || outcome === "HALF_LOSE") {
+    return "bg-rose-100 text-rose-800 dark:bg-rose-400/15 dark:text-rose-200";
+  }
+  return "bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-200";
 }
 
 type CsvValue = string | number | null | undefined;
@@ -279,7 +294,7 @@ export default function AppShell() {
   const [pendingConfirmRecordId, setPendingConfirmRecordId] = useState<string | null>(null);
   const [confirmingRecordId, setConfirmingRecordId] = useState<string | null>(null);
   const [selectedResultType, setSelectedResultType] = useState<ResultType>("win");
-  const [selectedComboResults, setSelectedComboResults] = useState<Record<string, ResultType>>({});
+  const [selectedComboResults, setSelectedComboResults] = useState<Record<string, ComboResultChoice>>({});
   const [playerName, setPlayerName] = useState("");
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -529,7 +544,7 @@ export default function AppShell() {
     return selectedComboResults[key] ?? resultTypeFromComboOutcome(record.comboLegs?.[legIndex]?.outcome ?? null);
   }
 
-  function setSelectedComboResult(recordId: string, legIndex: number, resultType: ResultType) {
+  function setSelectedComboResult(recordId: string, legIndex: number, resultType: ComboResultChoice) {
     setSelectedComboResults((current) => ({ ...current, [comboResultKey(recordId, legIndex)]: resultType }));
   }
 
@@ -814,7 +829,7 @@ export default function AppShell() {
       rate: String(record.rate),
       note: record.note ?? "",
       comboMode: Boolean(record.comboLegs?.length),
-      comboSelections: record.comboLegs?.map((leg) => ({ originalRate: leg.rate })) ?? [],
+      comboSelections: record.comboLegs?.map((leg) => ({ originalRate: leg.rate, note: leg.note ?? "" })) ?? [],
     });
     setRecordFormOpen(true);
   }
@@ -1216,7 +1231,7 @@ export default function AppShell() {
                           <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Combo Selections</p>
                           <button
                             className="rounded-xl border border-dashed border-slate-300 px-3 py-2 text-xs font-bold text-slate-500 active:scale-95 dark:border-white/20 dark:text-slate-300"
-                            onClick={() => setDraft((current) => ({ ...current, comboSelections: [...current.comboSelections, { originalRate: 0 }] }))}
+                            onClick={() => setDraft((current) => ({ ...current, comboSelections: [...current.comboSelections, { originalRate: 0, note: "" }] }))}
                             type="button"
                           >
                             + Add Leg
@@ -1225,21 +1240,33 @@ export default function AppShell() {
                         {draft.comboSelections.map((sel, idx) => (
                           <div className="mb-2 grid grid-cols-[auto_1fr_auto] items-center gap-2 rounded-2xl border border-slate-100 bg-slate-50 p-2 dark:border-white/10 dark:bg-[#121d19]" key={idx}>
                             <span className="flex size-9 items-center justify-center rounded-full bg-white text-xs font-black text-slate-500 dark:bg-white/10 dark:text-slate-300">{idx + 1}</span>
-                            <input
-                              className="input"
-                              inputMode="decimal"
-                              min="0"
-                              onChange={(event) => {
-                                const val = parseDraftNumber(event.target.value);
-                                const updated = [...draft.comboSelections];
-                                updated[idx] = { ...updated[idx], originalRate: val > 0 ? val : 0 };
-                                setDraft((current) => ({ ...current, comboSelections: updated }));
-                              }}
-                              placeholder="Rate"
-                              step="any"
-                              type="number"
-                              value={sel.originalRate || ""}
-                            />
+                            <div className="grid gap-2">
+                              <input
+                                className="input"
+                                inputMode="decimal"
+                                min="0"
+                                onChange={(event) => {
+                                  const val = parseDraftNumber(event.target.value);
+                                  const updated = [...draft.comboSelections];
+                                  updated[idx] = { ...updated[idx], originalRate: val > 0 ? val : 0 };
+                                  setDraft((current) => ({ ...current, comboSelections: updated }));
+                                }}
+                                placeholder="Rate"
+                                step="any"
+                                type="number"
+                                value={sel.originalRate || ""}
+                              />
+                              <input
+                                className="input"
+                                onChange={(event) => {
+                                  const updated = [...draft.comboSelections];
+                                  updated[idx] = { ...updated[idx], note: event.target.value };
+                                  setDraft((current) => ({ ...current, comboSelections: updated }));
+                                }}
+                                placeholder="Leg note"
+                                value={sel.note ?? ""}
+                              />
+                            </div>
                             <button
                               aria-label={`Remove leg ${idx + 1}`}
                               className="flex size-10 items-center justify-center rounded-xl bg-rose-50 text-sm font-bold text-rose-700 active:scale-95 dark:bg-rose-400/10 dark:text-rose-200"
@@ -1260,6 +1287,7 @@ export default function AppShell() {
                               {draft.comboSelections.map((sel, i) => (
                                 <p key={i} className="text-emerald-800 dark:text-emerald-200">
                                   Leg {i + 1}: Rate {sel.originalRate.toFixed(4)}
+                                  {sel.note ? ` - ${sel.note}` : ""}
                                 </p>
                               ))}
                               <p className="font-bold text-emerald-900 dark:text-emerald-100">Amount: {formatMoney(draftComboResult.amount)}</p>
@@ -1444,7 +1472,7 @@ export default function AppShell() {
                                           <p className="text-sm font-black">Leg {index + 1}</p>
                                           <p className="text-xs font-bold text-slate-500 dark:text-slate-400">Rate {formatNumber(leg.rate)}</p>
                                         </div>
-                                        <span className={`rounded-full px-3 py-1 text-xs font-bold ${leg.outcome ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200" : "bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-200"}`}>
+                                        <span className={`rounded-full px-3 py-1 text-xs font-bold ${comboOutcomeBadgeClass(leg.outcome)}`}>
                                           {leg.outcome ? comboOutcomeLabels[leg.outcome] : "Pending"}
                                         </span>
                                       </div>
@@ -1452,9 +1480,10 @@ export default function AppShell() {
                                         <select
                                           className="input min-h-11"
                                           disabled={busy || leg.outcome !== null}
-                                          onChange={(event) => setSelectedComboResult(record.id, index, event.target.value as ResultType)}
+                                          onChange={(event) => setSelectedComboResult(record.id, index, event.target.value as ComboResultChoice)}
                                           value={selectedLegResult}
                                         >
+                                          <option value="">Choose Result</option>
                                           {resultOptions.map((resultType) => (
                                             <option key={resultType} value={resultType}>
                                               {resultLabels[resultType]}
@@ -1463,8 +1492,12 @@ export default function AppShell() {
                                         </select>
                                         <button
                                           className="rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
-                                          disabled={busy || leg.outcome !== null}
-                                          onClick={() => confirmRecord(record.id, selectedLegResult, index)}
+                                          disabled={busy || leg.outcome !== null || selectedLegResult === ""}
+                                          onClick={() => {
+                                            if (selectedLegResult !== "") {
+                                              confirmRecord(record.id, selectedLegResult, index);
+                                            }
+                                          }}
                                           type="button"
                                         >
                                           {leg.outcome ? "Confirmed" : "Confirm"}
@@ -1777,7 +1810,7 @@ export default function AppShell() {
                           <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Combo Selections</p>
                           <button
                             className="rounded-xl border border-dashed border-slate-300 px-3 py-2 text-xs font-bold text-slate-500 active:scale-95 dark:border-white/20 dark:text-slate-300"
-                            onClick={() => setDraft((current) => ({ ...current, comboSelections: [...current.comboSelections, { originalRate: 0 }] }))}
+                            onClick={() => setDraft((current) => ({ ...current, comboSelections: [...current.comboSelections, { originalRate: 0, note: "" }] }))}
                             type="button"
                           >
                             + Add Leg
@@ -1786,21 +1819,33 @@ export default function AppShell() {
                         {draft.comboSelections.map((sel, idx) => (
                           <div className="mb-2 grid grid-cols-[auto_1fr_auto] items-center gap-2 rounded-2xl border border-slate-100 bg-slate-50 p-2 dark:border-white/10 dark:bg-[#121d19]" key={idx}>
                             <span className="flex size-9 items-center justify-center rounded-full bg-white text-xs font-black text-slate-500 dark:bg-white/10 dark:text-slate-300">{idx + 1}</span>
-                            <input
-                              className="input"
-                              inputMode="decimal"
-                              min="0"
-                              onChange={(event) => {
-                                const val = parseDraftNumber(event.target.value);
-                                const updated = [...draft.comboSelections];
-                                updated[idx] = { ...updated[idx], originalRate: val > 0 ? val : 0 };
-                                setDraft((current) => ({ ...current, comboSelections: updated }));
-                              }}
-                              placeholder="Rate"
-                              step="any"
-                              type="number"
-                              value={sel.originalRate || ""}
-                            />
+                            <div className="grid gap-2">
+                              <input
+                                className="input"
+                                inputMode="decimal"
+                                min="0"
+                                onChange={(event) => {
+                                  const val = parseDraftNumber(event.target.value);
+                                  const updated = [...draft.comboSelections];
+                                  updated[idx] = { ...updated[idx], originalRate: val > 0 ? val : 0 };
+                                  setDraft((current) => ({ ...current, comboSelections: updated }));
+                                }}
+                                placeholder="Rate"
+                                step="any"
+                                type="number"
+                                value={sel.originalRate || ""}
+                              />
+                              <input
+                                className="input"
+                                onChange={(event) => {
+                                  const updated = [...draft.comboSelections];
+                                  updated[idx] = { ...updated[idx], note: event.target.value };
+                                  setDraft((current) => ({ ...current, comboSelections: updated }));
+                                }}
+                                placeholder="Leg note"
+                                value={sel.note ?? ""}
+                              />
+                            </div>
                             <button
                               aria-label={`Remove leg ${idx + 1}`}
                               className="flex size-10 items-center justify-center rounded-xl bg-rose-50 text-sm font-bold text-rose-700 active:scale-95 dark:bg-rose-400/10 dark:text-rose-200"
@@ -1821,6 +1866,7 @@ export default function AppShell() {
                               {draft.comboSelections.map((sel, i) => (
                                 <p key={i} className="text-emerald-800 dark:text-emerald-200">
                                   Leg {i + 1}: Rate {sel.originalRate.toFixed(4)}
+                                  {sel.note ? ` - ${sel.note}` : ""}
                                 </p>
                               ))}
                               <p className="font-bold text-emerald-900 dark:text-emerald-100">Amount: {formatMoney(draftComboResult.amount)}</p>
@@ -2005,7 +2051,7 @@ export default function AppShell() {
                                           <p className="text-sm font-black">Leg {index + 1}</p>
                                           <p className="text-xs font-bold text-slate-500 dark:text-slate-400">Rate {formatNumber(leg.rate)}</p>
                                         </div>
-                                        <span className={`rounded-full px-3 py-1 text-xs font-bold ${leg.outcome ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200" : "bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-200"}`}>
+                                        <span className={`rounded-full px-3 py-1 text-xs font-bold ${comboOutcomeBadgeClass(leg.outcome)}`}>
                                           {leg.outcome ? comboOutcomeLabels[leg.outcome] : "Pending"}
                                         </span>
                                       </div>
@@ -2013,9 +2059,10 @@ export default function AppShell() {
                                         <select
                                           className="input min-h-11"
                                           disabled={busy || leg.outcome !== null}
-                                          onChange={(event) => setSelectedComboResult(record.id, index, event.target.value as ResultType)}
+                                          onChange={(event) => setSelectedComboResult(record.id, index, event.target.value as ComboResultChoice)}
                                           value={selectedLegResult}
                                         >
+                                          <option value="">Choose Result</option>
                                           {resultOptions.map((resultType) => (
                                             <option key={resultType} value={resultType}>
                                               {resultLabels[resultType]}
@@ -2024,8 +2071,12 @@ export default function AppShell() {
                                         </select>
                                         <button
                                           className="rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
-                                          disabled={busy || leg.outcome !== null}
-                                          onClick={() => confirmRecord(record.id, selectedLegResult, index)}
+                                          disabled={busy || leg.outcome !== null || selectedLegResult === ""}
+                                          onClick={() => {
+                                            if (selectedLegResult !== "") {
+                                              confirmRecord(record.id, selectedLegResult, index);
+                                            }
+                                          }}
                                           type="button"
                                         >
                                           {leg.outcome ? "Confirmed" : "Confirm"}
@@ -2746,8 +2797,8 @@ function ComboLegDetails({
   onCancelConfirm?: () => void;
   onConfirmLeg?: (legIndex: number, resultType: ResultType) => void;
   record: RecordWithBalance;
-  selectedComboResult?: (legIndex: number) => ResultType;
-  setSelectedComboResult?: (legIndex: number, resultType: ResultType) => void;
+  selectedComboResult?: (legIndex: number) => ComboResultChoice;
+  setSelectedComboResult?: (legIndex: number, resultType: ComboResultChoice) => void;
 }) {
   if (!record.comboLegs?.length) {
     return null;
@@ -2777,18 +2828,20 @@ function ComboLegDetails({
                   <p className="font-bold">Rate {formatNumber(leg.rate)}</p>
                   <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Applied {leg.currentRate === null ? "-" : formatNumber(leg.currentRate)}</p>
                 </div>
-                <span className={`rounded-full px-3 py-1 text-xs font-bold ${leg.outcome ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200" : "bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-200"}`}>
+                <span className={`rounded-full px-3 py-1 text-xs font-bold ${comboOutcomeBadgeClass(leg.outcome)}`}>
                   {comboOutcomeLabels[leg.outcome ?? ""] ?? "Pending"}
                 </span>
               </div>
+              {leg.note ? <p className="text-sm font-semibold text-slate-500 dark:text-slate-400 sm:col-span-3">Note: {leg.note}</p> : null}
               {confirming && onConfirmLeg && setSelectedComboResult ? (
                 <div className="grid gap-2 sm:col-span-3 sm:grid-cols-[1fr_auto]">
                   <select
                     className="input min-h-11"
                     disabled={busy || leg.outcome !== null}
-                    onChange={(event) => setSelectedComboResult(index, event.target.value as ResultType)}
+                    onChange={(event) => setSelectedComboResult(index, event.target.value as ComboResultChoice)}
                     value={selectedResult}
                   >
+                    <option value="">Choose Result</option>
                     {resultOptions.map((resultType) => (
                       <option key={resultType} value={resultType}>
                         {resultLabels[resultType]}
@@ -2797,8 +2850,12 @@ function ComboLegDetails({
                   </select>
                   <button
                     className="rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
-                    disabled={busy || leg.outcome !== null}
-                    onClick={() => onConfirmLeg(index, selectedResult)}
+                    disabled={busy || leg.outcome !== null || selectedResult === ""}
+                    onClick={() => {
+                      if (selectedResult !== "") {
+                        onConfirmLeg(index, selectedResult);
+                      }
+                    }}
                     type="button"
                   >
                     {leg.outcome ? "Confirmed" : "Confirm"}

@@ -49,10 +49,12 @@ export type ComboSelectionOutcome = "WIN" | "HALF_WIN" | "DRAW" | "HALF_LOSE" | 
 
 export type ComboSelection = {
   originalRate: number;
+  note?: string | null;
 };
 
 export type ComboLeg = {
   rate: number;
+  note: string | null;
   outcome: ComboSelectionOutcome | null;
   currentRate: number | null;
   returnAmount: number | null;

@@ -65,6 +65,7 @@ export function normalizeComboSelections(selections: ComboSelection[]): ComboLeg
 
     return {
       rate: selection.originalRate,
+      note: selection.note?.trim() || null,
       outcome: null,
       currentRate: null,
       returnAmount: null,
