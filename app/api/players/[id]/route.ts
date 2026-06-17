@@ -3,10 +3,21 @@ import { requireEditAccess } from "../../../lib/auth";
 import { getSql, type PlayerRow } from "../../../lib/db";
 import { jsonError } from "../../../lib/http";
 import { mapPlayer } from "../../../lib/mappers";
-import { ensureTrackerSchema } from "../../../lib/schema";
+import { ensureTrackerSchema, ensureTrackerSchemaIfNeeded } from "../../../lib/schema";
 import { cleanText } from "../../../lib/validation";
 
 type Params = { params: { id: string } };
+
+async function updatePlayerName(sql: ReturnType<typeof getSql>, playerId: string, name: string) {
+  const [player] = (await sql`
+    update players
+    set name = ${name}, updated_at = now()
+    where id = ${playerId}
+    returning id, name, display_order, created_at, updated_at
+  `) as PlayerRow[];
+
+  return player ?? null;
+}
 
 export async function PATCH(request: Request, { params }: Params) {
   try {
@@ -14,13 +25,15 @@ export async function PATCH(request: Request, { params }: Params) {
     const body = await request.json();
     const name = cleanText(body.name, "Player name");
     const sql = getSql();
-    await ensureTrackerSchema(sql);
-    const [player] = (await sql`
-      update players
-      set name = ${name}, updated_at = now()
-      where id = ${params.id}
-      returning id, name, display_order, created_at, updated_at
-    `) as PlayerRow[];
+    let player: PlayerRow | null;
+    try {
+      player = await updatePlayerName(sql, params.id, name);
+    } catch (error) {
+      if (!(await ensureTrackerSchemaIfNeeded(error, sql))) {
+        throw error;
+      }
+      player = await updatePlayerName(sql, params.id, name);
+    }
 
     if (!player) {
       return jsonError(new Error("Player was not found."), 404);

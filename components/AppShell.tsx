@@ -677,16 +677,27 @@ export default function AppShell() {
       return;
     }
     await runEdit(async () => {
-      await readJson(
+      const data = await readJson<{ player: { displayOrder: number; id: string; name: string; updatedAt: string } }>(
         await fetch(`/api/players/${playerId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ name: renameValue }),
         }),
       );
+      setPlayers((current) =>
+        current.map((player) =>
+          player.id === playerId
+            ? {
+                ...player,
+                displayOrder: data.player.displayOrder,
+                name: data.player.name,
+                updatedAt: data.player.updatedAt,
+              }
+            : player,
+        ),
+      );
       setRenamingId(null);
       setRenameValue("");
-      await loadPlayers(playerId);
     });
   }
 
@@ -1065,7 +1076,6 @@ export default function AppShell() {
                       </p>
                     </div>
                     <div className="ml-auto flex items-center gap-2">
-                      {editMode && !renamingId ? <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-500 dark:bg-white/10 dark:text-slate-300">Drag</span> : null}
                       <ProfitBadge value={player.balance} />
                     </div>
                   </div>
