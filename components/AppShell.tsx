@@ -308,6 +308,8 @@ export default function AppShell() {
   const [pendingDelete, setPendingDelete] = useState<PendingDelete>(null);
   const [deleteReason, setDeleteReason] = useState("");
   const [deleteReasonError, setDeleteReasonError] = useState("");
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deletePasswordError, setDeletePasswordError] = useState("");
   const [expandedRecordId, setExpandedRecordId] = useState<string | null>(null);
   const [trashOpen, setTrashOpen] = useState(false);
   const [finalizedOpen, setFinalizedOpen] = useState(false);
@@ -694,6 +696,8 @@ export default function AppShell() {
       return;
     }
     setPendingDelete({ type: "player", player });
+    setDeletePassword("");
+    setDeletePasswordError("");
   }
 
   async function confirmDelete() {
@@ -705,10 +709,20 @@ export default function AppShell() {
       setDeleteReasonError("Delete reason is required.");
       return;
     }
+    if (deleteTarget.type === "player" && deletePassword !== "123123") {
+      setDeletePasswordError("Password is incorrect.");
+      return;
+    }
 
     await runEdit(async () => {
       if (deleteTarget.type === "player") {
-        await readJson(await fetch(`/api/players/${deleteTarget.player.id}`, { method: "DELETE" }));
+        await readJson(
+          await fetch(`/api/players/${deleteTarget.player.id}`, {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ deletePassword }),
+          }),
+        );
         await loadPlayers(deleteTarget.player.id === selectedId ? null : selectedId);
       } else {
         await readJson(
@@ -727,6 +741,8 @@ export default function AppShell() {
       setPendingDelete(null);
       setDeleteReason("");
       setDeleteReasonError("");
+      setDeletePassword("");
+      setDeletePasswordError("");
     });
   }
 
@@ -1650,14 +1666,24 @@ export default function AppShell() {
               : "This will move this record out of the active history and into this player's trash."
           }
           confirmLabel={pendingDelete.type === "player" ? "Delete Player" : "Move to Trash"}
+          password={pendingDelete.type === "player" ? deletePassword : undefined}
+          passwordError={pendingDelete.type === "player" ? deletePasswordError : undefined}
           reason={pendingDelete.type === "record" ? deleteReason : undefined}
           reasonError={pendingDelete.type === "record" ? deleteReasonError : undefined}
           onCancel={() => {
             setPendingDelete(null);
             setDeleteReason("");
             setDeleteReasonError("");
+            setDeletePassword("");
+            setDeletePasswordError("");
           }}
           onConfirm={confirmDelete}
+          onPasswordChange={(value) => {
+            setDeletePassword(value);
+            if (value === "123123") {
+              setDeletePasswordError("");
+            }
+          }}
           onReasonChange={(value) => {
             setDeleteReason(value);
             if (value.trim()) {
@@ -2166,7 +2192,10 @@ function ConfirmDialog({
   confirmLabel,
   onCancel,
   onConfirm,
+  onPasswordChange,
   onReasonChange,
+  password,
+  passwordError,
   reason,
   reasonError,
   title,
@@ -2176,7 +2205,10 @@ function ConfirmDialog({
   confirmLabel: string;
   onCancel: () => void;
   onConfirm: () => void;
+  onPasswordChange?: (value: string) => void;
   onReasonChange?: (value: string) => void;
+  password?: string;
+  passwordError?: string;
   reason?: string;
   reasonError?: string;
   title: string;
@@ -2195,6 +2227,19 @@ function ConfirmDialog({
         <p className="text-sm font-bold uppercase tracking-wide text-rose-700 dark:text-rose-300">Confirm Action</p>
         <h2 className="mt-2 text-xl font-bold">{title}</h2>
         <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-400">{body}</p>
+        {password !== undefined ? (
+          <label className="mt-4 flex flex-col gap-2 text-sm font-bold text-slate-700 dark:text-slate-300">
+            Delete Password
+            <input
+              className="input"
+              onChange={(event) => onPasswordChange?.(event.target.value)}
+              placeholder="Enter delete password"
+              type="password"
+              value={password}
+            />
+            {passwordError ? <span className="text-sm font-semibold text-rose-700 dark:text-rose-300">{passwordError}</span> : null}
+          </label>
+        ) : null}
         {reason !== undefined ? (
           <label className="mt-4 flex flex-col gap-2 text-sm font-bold text-slate-700 dark:text-slate-300">
             Delete Reason

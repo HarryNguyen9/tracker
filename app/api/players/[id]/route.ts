@@ -33,9 +33,13 @@ export async function PATCH(request: Request, { params }: Params) {
   }
 }
 
-export async function DELETE(_request: Request, { params }: Params) {
+export async function DELETE(request: Request, { params }: Params) {
   try {
     requireEditAccess();
+    const body = await request.json().catch(() => ({}));
+    if (body.deletePassword !== "123123") {
+      return jsonError(new Error("Delete password is incorrect."), 400);
+    }
     const sql = getSql();
     await ensureTrackerSchema(sql);
     await sql`delete from players where id = ${params.id}`;
