@@ -21,6 +21,7 @@ export function mapPlayer(row: PlayerRow): Player {
   return {
     id: row.id,
     name: row.name,
+    displayOrder: toNumber(row.display_order),
     createdAt: toIsoText(row.created_at),
     updatedAt: toIsoText(row.updated_at),
   };

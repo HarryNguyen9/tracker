@@ -27,6 +27,7 @@ async function loadPlayerSummaries(sql: Sql): Promise<PlayerSummary[]> {
     select
       p.id,
       p.name,
+      p.display_order,
       p.created_at,
       p.updated_at,
       coalesce(sum(r.amount) filter (where r.deleted_at is null and r.status = 'finalized'), 0) as total_amount,
@@ -41,8 +42,8 @@ async function loadPlayerSummaries(sql: Sql): Promise<PlayerSummary[]> {
       count(r.id) filter (where r.deleted_at is null and r.status = 'finalized' and r.result_type = 'draw') as draw_count
     from players p
     left join records r on r.player_id = p.id
-    group by p.id, p.name, p.created_at, p.updated_at
-    order by p.created_at asc
+    group by p.id, p.name, p.display_order, p.created_at, p.updated_at
+    order by p.display_order asc, p.created_at asc
   `) as PlayerSummaryRow[];
 
   return rows.map((row) => {
@@ -97,9 +98,9 @@ export async function POST(request: Request) {
     const sql = getSql();
     await ensureTrackerSchema(sql);
     const [player] = (await sql`
-      insert into players (name)
-      values (${name})
-      returning id, name, created_at, updated_at
+      insert into players (name, display_order)
+      values (${name}, (select coalesce(max(display_order), 0) + 1 from players))
+      returning id, name, display_order, created_at, updated_at
     `) as PlayerRow[];
 
     return NextResponse.json({ player: mapPlayer(player) }, { status: 201 });

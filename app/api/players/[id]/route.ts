@@ -19,7 +19,7 @@ export async function PATCH(request: Request, { params }: Params) {
       update players
       set name = ${name}, updated_at = now()
       where id = ${params.id}
-      returning id, name, created_at, updated_at
+      returning id, name, display_order, created_at, updated_at
     `) as PlayerRow[];
 
     if (!player) {

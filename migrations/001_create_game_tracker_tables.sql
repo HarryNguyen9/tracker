@@ -3,6 +3,7 @@ create extension if not exists pgcrypto;
 create table if not exists players (
   id uuid primary key default gen_random_uuid(),
   name text not null,
+  display_order integer not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -60,6 +61,18 @@ alter table records
 alter table records
   add column if not exists combo_legs jsonb;
 
+alter table players
+  add column if not exists display_order integer not null default 0;
+
+update players
+set display_order = ordered.row_number
+from (
+  select id, row_number() over (order by created_at asc, id asc) as row_number
+  from players
+  where display_order = 0
+) ordered
+where players.id = ordered.id;
+
 alter table records
   alter column result_type drop not null;
 
@@ -94,6 +107,8 @@ create index if not exists records_player_id_created_at_idx on records (player_i
 create index if not exists records_player_id_deleted_at_idx on records (player_id, deleted_at);
 
 create index if not exists records_combo_legs_idx on records using gin (combo_legs);
+
+create index if not exists players_display_order_idx on players (display_order, created_at);
 
 alter table world_cup_matches
   add column if not exists provider text not null default 'football-data';

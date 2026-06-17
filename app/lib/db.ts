@@ -4,6 +4,7 @@ import type { RecordStatus, ResultType, WorldCupMatchStatus } from "./types";
 export type PlayerRow = {
   id: string;
   name: string;
+  display_order: string | number;
   created_at: string | Date;
   updated_at: string | Date;
 };

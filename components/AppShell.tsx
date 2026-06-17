@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { DragEvent, FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import { formatDate, formatMoney, formatNumber } from "../app/lib/format";
 import type { ComboSelection, ComboSelectionOutcome, PlayerSummary, RecordItem, RecordWithBalance, ResultType, WorldCupMatch } from "../app/lib/types";
 import { normalizeComboSelections, summarizeComboLegs } from "../app/lib/combo";
@@ -234,6 +234,19 @@ function applyConfirmedRecordSummary(player: PlayerSummary, record: RecordItem) 
   };
 }
 
+function movePlayer(items: PlayerSummary[], activeId: string, targetId: string) {
+  const activeIndex = items.findIndex((player) => player.id === activeId);
+  const targetIndex = items.findIndex((player) => player.id === targetId);
+  if (activeIndex === -1 || targetIndex === -1 || activeIndex === targetIndex) {
+    return items;
+  }
+
+  const nextItems = [...items];
+  const [activePlayer] = nextItems.splice(activeIndex, 1);
+  nextItems.splice(targetIndex, 0, activePlayer);
+  return nextItems.map((player, index) => ({ ...player, displayOrder: index + 1 }));
+}
+
 class ApiError extends Error {
   status: number;
 
@@ -293,6 +306,9 @@ export default function AppShell() {
   const [scheduleSyncedAt, setScheduleSyncedAt] = useState<string | null>(null);
   const [trashRecords, setTrashRecords] = useState<RecordWithBalance[]>([]);
   const [trashState, setTrashState] = useState<LoadState>("idle");
+  const [draggedPlayerId, setDraggedPlayerId] = useState<string | null>(null);
+  const [dragOverPlayerId, setDragOverPlayerId] = useState<string | null>(null);
+  const [reorderingPlayers, setReorderingPlayers] = useState(false);
 
   const selectedPlayer = players.find((player) => player.id === selectedId) ?? null;
   const pendingRecords = useMemo(() => records.filter((r) => r.status === "pending"), [records]);
@@ -366,6 +382,59 @@ export default function AppShell() {
       setRecordError(err instanceof ApiError ? err.message : "Unable to load data. Please try again.");
       setRecordState("error");
     }
+  }
+
+  async function savePlayerOrder(nextPlayers: PlayerSummary[]) {
+    setReorderingPlayers(true);
+    try {
+      await readJson<{ ok: boolean }>(
+        await fetch("/api/players/reorder", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ playerIds: nextPlayers.map((player) => player.id) }),
+        }),
+      );
+    } catch (err) {
+      console.error("Unable to reorder players", err);
+      setError(err instanceof ApiError ? err.message : "Unable to save player order. Please try again.");
+      await loadPlayers(selectedId, { silent: true });
+    } finally {
+      setReorderingPlayers(false);
+    }
+  }
+
+  function startPlayerDrag(event: DragEvent<HTMLElement>, playerId: string) {
+    if (!editMode || renamingId) {
+      event.preventDefault();
+      return;
+    }
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", playerId);
+    setDraggedPlayerId(playerId);
+    setDragOverPlayerId(playerId);
+  }
+
+  function moveDraggedPlayer(targetId: string) {
+    if (!draggedPlayerId || draggedPlayerId === targetId) {
+      return;
+    }
+    setDragOverPlayerId(targetId);
+    setPlayers((current) => movePlayer(current, draggedPlayerId, targetId));
+  }
+
+  function endPlayerDrag() {
+    setDraggedPlayerId(null);
+    setDragOverPlayerId(null);
+  }
+
+  function dropPlayer(event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    if (!draggedPlayerId) {
+      return;
+    }
+    const nextPlayers = players.map((player, index) => ({ ...player, displayOrder: index + 1 }));
+    endPlayerDrag();
+    void savePlayerOrder(nextPlayers);
   }
 
   async function loadTrashRecords(playerId: string | null) {
@@ -925,15 +994,28 @@ export default function AppShell() {
             </div>
           ) : null}
 
+          {reorderingPlayers ? <p className="mb-2 text-xs font-bold text-slate-500 dark:text-slate-400">Saving player order...</p> : null}
           <div className="flex flex-col gap-4">
             {players.map((player) => (
               <article
+                aria-grabbed={draggedPlayerId === player.id}
                 className={`rounded-2xl border p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
                   selectedId === player.id
                     ? "border-emerald-500 bg-emerald-50/90 dark:border-emerald-400 dark:bg-emerald-400/10"
                     : "border-slate-200/80 bg-white dark:border-white/10 dark:bg-white/[0.03]"
-                }`}
+                } ${editMode && !renamingId ? "cursor-grab active:cursor-grabbing" : ""} ${draggedPlayerId === player.id ? "opacity-60" : ""} ${dragOverPlayerId === player.id && draggedPlayerId !== player.id ? "ring-2 ring-emerald-400" : ""}`}
+                draggable={editMode && !renamingId && players.length > 1}
                 key={player.id}
+                onDragEnd={endPlayerDrag}
+                onDragEnter={() => moveDraggedPlayer(player.id)}
+                onDragOver={(event) => {
+                  if (!draggedPlayerId) return;
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
+                  moveDraggedPlayer(player.id);
+                }}
+                onDragStart={(event) => startPlayerDrag(event, player.id)}
+                onDrop={dropPlayer}
               >
                 <button className="w-full text-left" onClick={() => { setSelectedId(player.id); setMobileDetailOpen(true); }} type="button">
                   <div className="flex items-start gap-3">
@@ -951,7 +1033,10 @@ export default function AppShell() {
                         {player.finalizedRecordCount} finalized, {player.pendingRecordCount} pending, {player.trashedRecordCount} trash
                       </p>
                     </div>
-                    <div className="ml-auto"><ProfitBadge value={player.balance} /></div>
+                    <div className="ml-auto flex items-center gap-2">
+                      {editMode && !renamingId ? <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-500 dark:bg-white/10 dark:text-slate-300">Drag</span> : null}
+                      <ProfitBadge value={player.balance} />
+                    </div>
                   </div>
                 </button>
                 <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
@@ -1290,8 +1375,37 @@ export default function AppShell() {
                       <MiniMetric label="Profit" value={record.status === "pending" ? "-" : formatMoney(record.profit)} />
                       <MiniMetric label="Balance" value={record.balance === null ? "-" : formatMoney(record.balance)} />
                     </div>
-                    {record.comboLegs?.length ? <ComboLegDetails record={record} /> : null}
-                    {record.status === "pending" ? (
+                    {record.comboLegs?.length ? (
+                      <ComboLegDetails
+                        busy={busy}
+                        confirming={confirmingRecordId === record.id}
+                        onCancelConfirm={() => setConfirmingRecordId(null)}
+                        onConfirmLeg={(legIndex, resultType) => confirmRecord(record.id, resultType, legIndex)}
+                        record={record}
+                        selectedComboResult={(legIndex) => selectedComboResult(record, legIndex)}
+                        setSelectedComboResult={(legIndex, resultType) => setSelectedComboResult(record.id, legIndex, resultType)}
+                      />
+                    ) : null}
+                    {record.status === "pending" && record.comboLegs?.length && confirmingRecordId !== record.id ? (
+                      <div className="mt-5">
+                        <button
+                          className="w-full rounded-2xl bg-ink py-3 text-sm font-bold text-white"
+                          onClick={() => {
+                            if (!editMode) {
+                              setPendingConfirmRecordId(record.id);
+                              openPinFor("confirm");
+                              return;
+                            }
+                            setConfirmingRecordId(record.id);
+                            setExpandedRecordId(record.id);
+                          }}
+                          type="button"
+                        >
+                          Confirm Result
+                        </button>
+                      </div>
+                    ) : null}
+                    {record.status === "pending" && !record.comboLegs?.length ? (
                       <div className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
                         {confirmingRecordId === record.id ? (
                           <div className="flex flex-col gap-4">
@@ -1822,8 +1936,37 @@ export default function AppShell() {
                       <MiniMetric label="Profit" value={record.status === "pending" ? "-" : formatMoney(record.profit)} />
                       <MiniMetric label="Balance" value={record.balance === null ? "-" : formatMoney(record.balance)} />
                     </div>
-                    {record.comboLegs?.length ? <ComboLegDetails record={record} /> : null}
-                    {record.status === "pending" ? (
+                    {record.comboLegs?.length ? (
+                      <ComboLegDetails
+                        busy={busy}
+                        confirming={confirmingRecordId === record.id}
+                        onCancelConfirm={() => setConfirmingRecordId(null)}
+                        onConfirmLeg={(legIndex, resultType) => confirmRecord(record.id, resultType, legIndex)}
+                        record={record}
+                        selectedComboResult={(legIndex) => selectedComboResult(record, legIndex)}
+                        setSelectedComboResult={(legIndex, resultType) => setSelectedComboResult(record.id, legIndex, resultType)}
+                      />
+                    ) : null}
+                    {record.status === "pending" && record.comboLegs?.length && confirmingRecordId !== record.id ? (
+                      <div className="mt-5">
+                        <button
+                          className="w-full rounded-2xl bg-ink py-3 text-sm font-bold text-white"
+                          onClick={() => {
+                            if (!editMode) {
+                              setPendingConfirmRecordId(record.id);
+                              openPinFor("confirm");
+                              return;
+                            }
+                            setConfirmingRecordId(record.id);
+                            setExpandedRecordId(record.id);
+                          }}
+                          type="button"
+                        >
+                          Confirm Result
+                        </button>
+                      </div>
+                    ) : null}
+                    {record.status === "pending" && !record.comboLegs?.length ? (
                       <div className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
                         {confirmingRecordId === record.id ? (
                           <div className="flex flex-col gap-4">
@@ -2589,7 +2732,23 @@ function MiniMetric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ComboLegDetails({ record }: { record: RecordWithBalance }) {
+function ComboLegDetails({
+  busy = false,
+  confirming = false,
+  onCancelConfirm,
+  onConfirmLeg,
+  record,
+  selectedComboResult,
+  setSelectedComboResult,
+}: {
+  busy?: boolean;
+  confirming?: boolean;
+  onCancelConfirm?: () => void;
+  onConfirmLeg?: (legIndex: number, resultType: ResultType) => void;
+  record: RecordWithBalance;
+  selectedComboResult?: (legIndex: number) => ResultType;
+  setSelectedComboResult?: (legIndex: number, resultType: ResultType) => void;
+}) {
   if (!record.comboLegs?.length) {
     return null;
   }
@@ -2598,21 +2757,57 @@ function ComboLegDetails({ record }: { record: RecordWithBalance }) {
     <div className="mt-4 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Combo Legs</p>
-        <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-slate-500 dark:bg-white/10 dark:text-slate-300">{record.comboLegs.length} legs</span>
+        <div className="flex items-center gap-2">
+          <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-slate-500 dark:bg-white/10 dark:text-slate-300">{record.comboLegs.length} legs</span>
+          {confirming && onCancelConfirm ? (
+            <button className="rounded-full bg-slate-200 px-3 py-1 text-xs font-bold text-slate-700 active:scale-95 dark:bg-white/10 dark:text-slate-200" onClick={onCancelConfirm} type="button">
+              Cancel
+            </button>
+          ) : null}
+        </div>
       </div>
       <div className="mt-3 overflow-hidden rounded-2xl border border-slate-100 bg-white dark:border-white/10 dark:bg-[#121d19]">
-        {record.comboLegs.map((leg, index) => (
-          <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3 border-b border-slate-100 p-3 last:border-b-0 dark:border-white/10" key={index}>
-            <span className="flex size-8 items-center justify-center rounded-full bg-slate-100 text-xs font-black text-slate-600 dark:bg-white/10 dark:text-slate-300">{index + 1}</span>
-            <div className="min-w-0">
-              <p className="font-bold">Rate {formatNumber(leg.rate)}</p>
-              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Applied {leg.currentRate === null ? "-" : formatNumber(leg.currentRate)}</p>
+        {record.comboLegs.map((leg, index) => {
+          const selectedResult = selectedComboResult?.(index) ?? resultTypeFromComboOutcome(leg.outcome);
+          return (
+            <div className="grid gap-3 border-b border-slate-100 p-3 last:border-b-0 dark:border-white/10 sm:grid-cols-[auto_1fr_auto] sm:items-center" key={index}>
+              <div className="flex min-w-0 items-center gap-3 sm:contents">
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-black text-slate-600 dark:bg-white/10 dark:text-slate-300">{index + 1}</span>
+                <div className="min-w-0 flex-1">
+                  <p className="font-bold">Rate {formatNumber(leg.rate)}</p>
+                  <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Applied {leg.currentRate === null ? "-" : formatNumber(leg.currentRate)}</p>
+                </div>
+                <span className={`rounded-full px-3 py-1 text-xs font-bold ${leg.outcome ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200" : "bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-200"}`}>
+                  {comboOutcomeLabels[leg.outcome ?? ""] ?? "Pending"}
+                </span>
+              </div>
+              {confirming && onConfirmLeg && setSelectedComboResult ? (
+                <div className="grid gap-2 sm:col-span-3 sm:grid-cols-[1fr_auto]">
+                  <select
+                    className="input min-h-11"
+                    disabled={busy || leg.outcome !== null}
+                    onChange={(event) => setSelectedComboResult(index, event.target.value as ResultType)}
+                    value={selectedResult}
+                  >
+                    {resultOptions.map((resultType) => (
+                      <option key={resultType} value={resultType}>
+                        {resultLabels[resultType]}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    className="rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={busy || leg.outcome !== null}
+                    onClick={() => onConfirmLeg(index, selectedResult)}
+                    type="button"
+                  >
+                    {leg.outcome ? "Confirmed" : "Confirm"}
+                  </button>
+                </div>
+              ) : null}
             </div>
-            <span className={`rounded-full px-3 py-1 text-xs font-bold ${leg.outcome ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200" : "bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-200"}`}>
-              {comboOutcomeLabels[leg.outcome ?? ""] ?? "Pending"}
-            </span>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

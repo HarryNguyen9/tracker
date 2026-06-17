@@ -43,6 +43,7 @@ async function applyTrackerSchema(sql: Sql) {
     create table if not exists players (
       id uuid primary key default gen_random_uuid(),
       name text not null,
+      display_order integer not null default 0,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
     )
@@ -90,6 +91,17 @@ async function applyTrackerSchema(sql: Sql) {
     )
   `;
 
+  await sql`alter table players add column if not exists display_order integer not null default 0`;
+  await sql`
+    update players
+    set display_order = ordered.row_number
+    from (
+      select id, row_number() over (order by created_at asc, id asc) as row_number
+      from players
+      where display_order = 0
+    ) ordered
+    where players.id = ordered.id
+  `;
   await sql`alter table records add column if not exists status text not null default 'pending'`;
   await sql`alter table records add column if not exists result_type text`;
   await sql`alter table records add column if not exists deleted_at timestamptz`;
@@ -116,6 +128,7 @@ async function applyTrackerSchema(sql: Sql) {
     add constraint records_result_type_check
     check (result_type is null or result_type in ('win', 'loss', 'draw', 'win_half', 'loss_half'))
   `;
+  await sql`create index if not exists players_display_order_idx on players (display_order, created_at)`;
   await sql`create index if not exists records_player_id_created_at_idx on records (player_id, created_at)`;
   await sql`create index if not exists records_player_id_deleted_at_idx on records (player_id, deleted_at)`;
   await sql`create index if not exists records_combo_legs_idx on records using gin (combo_legs)`;
