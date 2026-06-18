@@ -6,7 +6,7 @@ import type { ComboSelection, ComboSelectionOutcome, PlayerSummary, RecordItem, 
 import { normalizeComboSelections, summarizeComboLegs } from "../app/lib/combo";
 
 type LoadState = "idle" | "loading" | "ready" | "error";
-type RecordDraft = { amount: string; rate: string; note: string; comboMode: boolean; comboSelections: ComboSelection[] };
+type RecordDraft = { amount: string; rate: string; note: string; comboMode: boolean; comboSelections: ComboSelection[]; resultType: ResultType };
 type PendingUnlockAction = "player" | "record" | "confirm" | null;
 type PendingDelete = { type: "player"; player: PlayerSummary } | { type: "record"; record: RecordWithBalance } | null;
 type ScheduleTab = "schedule" | "knockout" | "groups";
@@ -24,7 +24,7 @@ type GroupStanding = {
 
 const comboOutcomeLabels: Record<string, string> = { WIN: "Win", HALF_WIN: "Half Win", DRAW: "Draw", HALF_LOSE: "Half Lose", LOSE: "Lose" };
 const comboOutcomeOptions: ComboSelectionOutcome[] = ["WIN", "HALF_WIN", "DRAW", "HALF_LOSE", "LOSE"];
-const emptyRecordDraft: RecordDraft = { amount: "", rate: "", note: "", comboMode: false, comboSelections: [] };
+const emptyRecordDraft: RecordDraft = { amount: "", rate: "", note: "", comboMode: false, comboSelections: [], resultType: "win" };
 const resultLabels: Record<ResultType, string> = { win: "Win", loss: "Loss", draw: "Draw", win_half: "Win Half", loss_half: "Loss Half" };
 const resultOptions: ResultType[] = ["win", "win_half", "draw", "loss_half", "loss"];
 const quickAmountIncrements = [1, 2, 5, 10, 20];
@@ -328,6 +328,7 @@ export default function AppShell() {
   const [reorderingPlayers, setReorderingPlayers] = useState(false);
 
   const selectedPlayer = players.find((player) => player.id === selectedId) ?? null;
+  const editingRecord = editingRecordId ? records.find((record) => record.id === editingRecordId) ?? null : null;
   const pendingRecords = useMemo(() => records.filter((r) => r.status === "pending"), [records]);
   const finalizedRecords = useMemo(() => records.filter((r) => r.status === "finalized"), [records]);
   const draftComboResult = useMemo(() => {
@@ -766,6 +767,7 @@ export default function AppShell() {
     setRecordError("");
     await runEdit(async () => {
       const isCreating = !editingRecordId;
+      const editingRecord = editingRecordId ? records.find((record) => record.id === editingRecordId) : null;
       const url = editingRecordId ? `/api/records/${editingRecordId}` : "/api/records";
       let payload: Record<string, unknown> = { note: draft.note, playerId: selectedId, amount: draft.amount };
       if (draft.comboMode && draft.comboSelections.length > 0) {
@@ -781,6 +783,9 @@ export default function AppShell() {
         }
       } else {
         payload.rate = draft.rate;
+      }
+      if (editingRecord?.status === "finalized") {
+        payload.resultType = draft.resultType;
       }
       const data = await readJson<{ record: RecordItem }>(
         await fetch(url, {
@@ -847,16 +852,14 @@ export default function AppShell() {
       openPinFor("record");
       return;
     }
-    if (record.status !== "pending") {
-      return;
-    }
     setEditingRecordId(record.id);
     setDraft({
       amount: String(record.amount),
       rate: String(record.rate),
       note: record.note ?? "",
-      comboMode: Boolean(record.comboLegs?.length),
-      comboSelections: record.comboLegs?.map((leg) => ({ originalRate: leg.rate, note: leg.note ?? "" })) ?? [],
+      comboMode: Boolean(record.comboLegs?.length && record.status === "pending"),
+      comboSelections: record.status === "pending" ? record.comboLegs?.map((leg) => ({ originalRate: leg.rate, note: leg.note ?? "" })) ?? [] : [],
+      resultType: record.resultType ?? "win",
     });
     setRecordFormOpen(true);
   }
@@ -1338,6 +1341,21 @@ export default function AppShell() {
                         />
                       </Field>
                     )}
+                    {editingRecord?.status === "finalized" ? (
+                      <Field label="Result">
+                        <select
+                          className="input"
+                          onChange={(event) => setDraft((current) => ({ ...current, resultType: event.target.value as ResultType }))}
+                          value={draft.resultType}
+                        >
+                          {resultOptions.map((resultType) => (
+                            <option key={resultType} value={resultType}>
+                              {resultLabels[resultType]}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                    ) : null}
                     <div className="flex items-start gap-2 sm:col-span-2">
                       <div className="flex-1">
                         <Field label="Note">
@@ -1582,11 +1600,9 @@ export default function AppShell() {
                     ) : null}
                     {editMode ? (
                       <div className="mt-4 flex gap-2">
-                        {record.status === "pending" ? (
-                          <button className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold dark:bg-white/10" onClick={() => startEditRecord(record)} type="button">
-                            Edit Record
-                          </button>
-                        ) : null}
+                        <button className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold dark:bg-white/10" onClick={() => startEditRecord(record)} type="button">
+                          Edit Record
+                        </button>
                         <button className="flex-1 rounded-2xl bg-rose-50 py-2 text-sm font-bold text-rose-700 dark:bg-rose-400/10 dark:text-rose-200" onClick={() => removeRecord(record)} type="button">
                           Move to Trash
                         </button>
@@ -1927,6 +1943,21 @@ export default function AppShell() {
                         />
                       </Field>
                     )}
+                    {editingRecord?.status === "finalized" ? (
+                      <Field label="Result">
+                        <select
+                          className="input"
+                          onChange={(event) => setDraft((current) => ({ ...current, resultType: event.target.value as ResultType }))}
+                          value={draft.resultType}
+                        >
+                          {resultOptions.map((resultType) => (
+                            <option key={resultType} value={resultType}>
+                              {resultLabels[resultType]}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                    ) : null}
                     <div className="flex items-start gap-2 sm:col-span-2">
                       <div className="flex-1">
                         <Field label="Note">
@@ -2171,11 +2202,9 @@ export default function AppShell() {
                     ) : null}
                     {editMode ? (
                       <div className="mt-4 flex gap-2">
-                        {record.status === "pending" ? (
-                          <button className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold dark:bg-white/10" onClick={() => startEditRecord(record)} type="button">
-                            Edit Record
-                          </button>
-                        ) : null}
+                        <button className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold dark:bg-white/10" onClick={() => startEditRecord(record)} type="button">
+                          Edit Record
+                        </button>
                         <button className="flex-1 rounded-2xl bg-rose-50 py-2 text-sm font-bold text-rose-700 dark:bg-rose-400/10 dark:text-rose-200" onClick={() => removeRecord(record)} type="button">
                           Move to Trash
                         </button>
