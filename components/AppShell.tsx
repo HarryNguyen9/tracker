@@ -292,6 +292,7 @@ export default function AppShell() {
   const [recordFormOpen, setRecordFormOpen] = useState(false);
   const [pendingUnlockAction, setPendingUnlockAction] = useState<PendingUnlockAction>(null);
   const [pendingConfirmRecordId, setPendingConfirmRecordId] = useState<string | null>(null);
+  const [pendingEditRecordId, setPendingEditRecordId] = useState<string | null>(null);
   const [confirmingRecordId, setConfirmingRecordId] = useState<string | null>(null);
   const [selectedResultType, setSelectedResultType] = useState<ResultType>("win");
   const [selectedComboResults, setSelectedComboResults] = useState<Record<string, ComboResultChoice>>({});
@@ -619,7 +620,12 @@ export default function AppShell() {
         setAddPlayerOpen(true);
       }
       if (pendingUnlockAction === "record") {
-        setRecordFormOpen(true);
+        const recordToEdit = pendingEditRecordId ? records.find((record) => record.id === pendingEditRecordId) : null;
+        if (recordToEdit) {
+          beginEditRecord(recordToEdit);
+        } else {
+          setRecordFormOpen(true);
+        }
       }
       if (pendingUnlockAction === "confirm" && pendingConfirmRecordId) {
         setConfirmingRecordId(pendingConfirmRecordId);
@@ -627,6 +633,7 @@ export default function AppShell() {
       }
       setPendingUnlockAction(null);
       setPendingConfirmRecordId(null);
+      setPendingEditRecordId(null);
       await Promise.all([loadPlayers(selectedId, { silent: true }), loadRecords(selectedId, { silent: true })]);
     } catch {
       setPinError("Invalid PIN.");
@@ -830,7 +837,7 @@ export default function AppShell() {
           current.map((player) => (player.id === selectedId ? applyConfirmedRecordSummary(player, data.record) : player)),
         );
       }
-      if (legIndex === undefined || data.record.status === "finalized") {
+      if (legIndex === undefined) {
         setConfirmingRecordId(null);
       }
       refreshSelectedData(selectedId);
@@ -847,11 +854,7 @@ export default function AppShell() {
     setDeleteReasonError("");
   }
 
-  function startEditRecord(record: RecordWithBalance) {
-    if (!editMode) {
-      openPinFor("record");
-      return;
-    }
+  function beginEditRecord(record: RecordWithBalance) {
     setEditingRecordId(record.id);
     setDraft({
       amount: String(record.amount),
@@ -862,6 +865,15 @@ export default function AppShell() {
       resultType: record.resultType ?? "win",
     });
     setRecordFormOpen(true);
+  }
+
+  function startEditRecord(record: RecordWithBalance) {
+    if (!editMode) {
+      setPendingEditRecordId(record.id);
+      openPinFor("record");
+      return;
+    }
+    beginEditRecord(record);
   }
 
   function resetRecordForm() {
@@ -1435,6 +1447,16 @@ export default function AppShell() {
                     </button>
                     {isExpanded ? (
                       <>
+                    <div className="mt-4 flex gap-2">
+                      <button className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold dark:bg-white/10" onClick={() => startEditRecord(record)} type="button">
+                        Edit Record
+                      </button>
+                      {editMode ? (
+                        <button className="flex-1 rounded-2xl bg-rose-50 py-2 text-sm font-bold text-rose-700 dark:bg-rose-400/10 dark:text-rose-200" onClick={() => removeRecord(record)} type="button">
+                          Move to Trash
+                        </button>
+                      ) : null}
+                    </div>
                     <div className="mt-4">
                       {record.note ? <p className="font-medium">{record.note}</p> : <p className="text-sm text-slate-400 dark:text-slate-500">No note</p>}
                     </div>
@@ -1457,6 +1479,25 @@ export default function AppShell() {
                         selectedComboResult={(legIndex) => selectedComboResult(record, legIndex)}
                         setSelectedComboResult={(legIndex, resultType) => setSelectedComboResult(record.id, legIndex, resultType)}
                       />
+                    ) : null}
+                    {record.status === "finalized" && record.comboLegs?.length && confirmingRecordId !== record.id ? (
+                      <div className="mt-5">
+                        <button
+                          className="w-full rounded-2xl bg-slate-100 py-3 text-sm font-bold text-ink active:scale-95 dark:bg-white/10 dark:text-slate-50"
+                          onClick={() => {
+                            if (!editMode) {
+                              setPendingConfirmRecordId(record.id);
+                              openPinFor("confirm");
+                              return;
+                            }
+                            setConfirmingRecordId(record.id);
+                            setExpandedRecordId(record.id);
+                          }}
+                          type="button"
+                        >
+                          Edit Results
+                        </button>
+                      </div>
                     ) : null}
                     {record.status === "pending" && record.comboLegs?.length && confirmingRecordId !== record.id ? (
                       <div className="mt-5">
@@ -1598,16 +1639,6 @@ export default function AppShell() {
                         )}
                       </div>
                     ) : null}
-                    {editMode ? (
-                      <div className="mt-4 flex gap-2">
-                        <button className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold dark:bg-white/10" onClick={() => startEditRecord(record)} type="button">
-                          Edit Record
-                        </button>
-                        <button className="flex-1 rounded-2xl bg-rose-50 py-2 text-sm font-bold text-rose-700 dark:bg-rose-400/10 dark:text-rose-200" onClick={() => removeRecord(record)} type="button">
-                          Move to Trash
-                        </button>
-                      </div>
-                    ) : null}
                       </>
                     ) : null}
                   </article>
@@ -1678,8 +1709,27 @@ export default function AppShell() {
 
       {finalizedOpen ? (
         <FinalizedRecordsDialog
+          busy={busy}
+          confirmingRecordId={confirmingRecordId}
+          editMode={editMode}
           onCancel={() => setFinalizedOpen(false)}
+          onConfirmLeg={(recordId, legIndex, resultType) => confirmRecord(recordId, resultType, legIndex)}
+          onEditRecord={(record) => {
+            setFinalizedOpen(false);
+            startEditRecord(record);
+          }}
+          onOpenEditAccess={(recordId) => {
+            setPendingConfirmRecordId(recordId);
+            openPinFor("confirm");
+          }}
+          onRemoveRecord={(record) => {
+            setFinalizedOpen(false);
+            removeRecord(record);
+          }}
+          onSetConfirmingRecordId={setConfirmingRecordId}
           records={finalizedRecords}
+          selectedComboResult={selectedComboResult}
+          setSelectedComboResult={setSelectedComboResult}
         />
       ) : null}
 
@@ -2037,6 +2087,16 @@ export default function AppShell() {
                     </button>
                     {isExpanded ? (
                       <>
+                    <div className="mt-4 flex gap-2">
+                      <button className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold dark:bg-white/10" onClick={() => startEditRecord(record)} type="button">
+                        Edit Record
+                      </button>
+                      {editMode ? (
+                        <button className="flex-1 rounded-2xl bg-rose-50 py-2 text-sm font-bold text-rose-700 dark:bg-rose-400/10 dark:text-rose-200" onClick={() => removeRecord(record)} type="button">
+                          Move to Trash
+                        </button>
+                      ) : null}
+                    </div>
                     <div className="mt-4">
                       {record.note ? <p className="font-medium">{record.note}</p> : <p className="text-sm text-slate-400 dark:text-slate-500">No note</p>}
                     </div>
@@ -2059,6 +2119,25 @@ export default function AppShell() {
                         selectedComboResult={(legIndex) => selectedComboResult(record, legIndex)}
                         setSelectedComboResult={(legIndex, resultType) => setSelectedComboResult(record.id, legIndex, resultType)}
                       />
+                    ) : null}
+                    {record.status === "finalized" && record.comboLegs?.length && confirmingRecordId !== record.id ? (
+                      <div className="mt-5">
+                        <button
+                          className="w-full rounded-2xl bg-slate-100 py-3 text-sm font-bold text-ink active:scale-95 dark:bg-white/10 dark:text-slate-50"
+                          onClick={() => {
+                            if (!editMode) {
+                              setPendingConfirmRecordId(record.id);
+                              openPinFor("confirm");
+                              return;
+                            }
+                            setConfirmingRecordId(record.id);
+                            setExpandedRecordId(record.id);
+                          }}
+                          type="button"
+                        >
+                          Edit Results
+                        </button>
+                      </div>
                     ) : null}
                     {record.status === "pending" && record.comboLegs?.length && confirmingRecordId !== record.id ? (
                       <div className="mt-5">
@@ -2198,16 +2277,6 @@ export default function AppShell() {
                             Confirm Result
                           </button>
                         )}
-                      </div>
-                    ) : null}
-                    {editMode ? (
-                      <div className="mt-4 flex gap-2">
-                        <button className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold dark:bg-white/10" onClick={() => startEditRecord(record)} type="button">
-                          Edit Record
-                        </button>
-                        <button className="flex-1 rounded-2xl bg-rose-50 py-2 text-sm font-bold text-rose-700 dark:bg-rose-400/10 dark:text-rose-200" onClick={() => removeRecord(record)} type="button">
-                          Move to Trash
-                        </button>
                       </div>
                     ) : null}
                       </>
@@ -2721,11 +2790,31 @@ function TrashDialog({
 }
 
 function FinalizedRecordsDialog({
+  busy,
+  confirmingRecordId,
+  editMode,
   onCancel,
+  onConfirmLeg,
+  onEditRecord,
+  onOpenEditAccess,
+  onRemoveRecord,
+  onSetConfirmingRecordId,
   records,
+  selectedComboResult,
+  setSelectedComboResult,
 }: {
+  busy: boolean;
+  confirmingRecordId: string | null;
+  editMode: boolean;
   onCancel: () => void;
+  onConfirmLeg: (recordId: string, legIndex: number, resultType: ResultType) => void;
+  onEditRecord: (record: RecordWithBalance) => void;
+  onOpenEditAccess: (recordId: string) => void;
+  onRemoveRecord: (record: RecordWithBalance) => void;
+  onSetConfirmingRecordId: (recordId: string | null) => void;
   records: RecordWithBalance[];
+  selectedComboResult: (record: RecordWithBalance, legIndex: number) => ComboResultChoice;
+  setSelectedComboResult: (recordId: string, legIndex: number, resultType: ComboResultChoice) => void;
 }) {
   const totalProfit = records.reduce((sum, r) => sum + r.profit, 0);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -2792,6 +2881,16 @@ function FinalizedRecordsDialog({
                 </button>
                 {isExpanded ? (
                   <>
+                    <div className="mt-4 flex gap-2">
+                      <button className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold dark:bg-white/10" onClick={() => onEditRecord(record)} type="button">
+                        Edit Record
+                      </button>
+                      {editMode ? (
+                        <button className="flex-1 rounded-2xl bg-rose-50 py-2 text-sm font-bold text-rose-700 dark:bg-rose-400/10 dark:text-rose-200" onClick={() => onRemoveRecord(record)} type="button">
+                          Move to Trash
+                        </button>
+                      ) : null}
+                    </div>
                     <div className="mt-4 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
                       <MiniMetric label="Amount" value={formatMoney(record.amount)} />
                       <MiniMetric label="Rate" value={formatNumber(record.rate)} />
@@ -2801,7 +2900,35 @@ function FinalizedRecordsDialog({
                       <MiniMetric label="Balance" value={record.balance === null ? "-" : formatMoney(record.balance)} />
                       <MiniMetric label="Status" value="Finalized" />
                     </div>
-                    {record.comboLegs?.length ? <ComboLegDetails record={record} /> : null}
+                    {record.comboLegs?.length ? (
+                      <ComboLegDetails
+                        busy={busy}
+                        confirming={confirmingRecordId === record.id}
+                        onCancelConfirm={() => onSetConfirmingRecordId(null)}
+                        onConfirmLeg={(legIndex, resultType) => onConfirmLeg(record.id, legIndex, resultType)}
+                        record={record}
+                        selectedComboResult={(legIndex) => selectedComboResult(record, legIndex)}
+                        setSelectedComboResult={(legIndex, resultType) => setSelectedComboResult(record.id, legIndex, resultType)}
+                      />
+                    ) : null}
+                    {record.comboLegs?.length && confirmingRecordId !== record.id ? (
+                      <div className="mt-5">
+                        <button
+                          className="w-full rounded-2xl bg-slate-100 py-3 text-sm font-bold text-ink active:scale-95 dark:bg-white/10 dark:text-slate-50"
+                          onClick={() => {
+                            if (!editMode) {
+                              onOpenEditAccess(record.id);
+                              return;
+                            }
+                            onSetConfirmingRecordId(record.id);
+                            setExpandedId(record.id);
+                          }}
+                          type="button"
+                        >
+                          Edit Results
+                        </button>
+                      </div>
+                    ) : null}
                     {record.note ? (
                       <div className="mt-3 rounded-2xl bg-slate-50 p-3 text-sm dark:bg-white/[0.04]">
                         <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Note</p>
@@ -2921,7 +3048,7 @@ function ComboLegDetails({
                 <div className="grid gap-2 sm:col-span-3 sm:grid-cols-[1fr_auto]">
                   <select
                     className="input min-h-11"
-                    disabled={busy || leg.outcome !== null}
+                    disabled={busy}
                     onChange={(event) => setSelectedComboResult(index, event.target.value as ComboResultChoice)}
                     value={selectedResult}
                   >
@@ -2934,7 +3061,7 @@ function ComboLegDetails({
                   </select>
                   <button
                     className="rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
-                    disabled={busy || leg.outcome !== null || selectedResult === ""}
+                    disabled={busy || selectedResult === ""}
                     onClick={() => {
                       if (selectedResult !== "") {
                         onConfirmLeg(index, selectedResult);
@@ -2942,7 +3069,7 @@ function ComboLegDetails({
                     }}
                     type="button"
                   >
-                    {leg.outcome ? "Confirmed" : "Confirm"}
+                    {leg.outcome ? "Save" : "Confirm"}
                   </button>
                 </div>
               ) : null}

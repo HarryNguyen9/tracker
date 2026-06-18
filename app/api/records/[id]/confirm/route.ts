@@ -5,7 +5,7 @@ import { jsonError } from "../../../../lib/http";
 import { mapRecord } from "../../../../lib/mappers";
 import { ensureTrackerSchemaIfNeeded } from "../../../../lib/schema";
 import { calculateRecordValues, parseResultType } from "../../../../lib/validation";
-import { applyComboOutcome, summarizeComboLegs } from "../../../../lib/combo";
+import { applyComboOutcome } from "../../../../lib/combo";
 import type { ComboLeg } from "../../../../lib/types";
 
 type Params = { params: { id: string } };
@@ -40,8 +40,8 @@ async function confirmStoredRecord(sql: Sql, id: string, resultType: ReturnType<
     nextComboLegs = comboResult.legs;
     finalAmount = comboResult.summary.amount;
     finalRate = comboResult.summary.rate;
-    finalReturnAmount = comboResult.finalized && comboResult.resultType === "loss" ? 0 : comboResult.finalized ? comboResult.summary.returnAmount : 0;
-    finalProfit = comboResult.finalized ? finalReturnAmount - comboResult.summary.amount : 0;
+    finalReturnAmount = comboResult.summary.returnAmount;
+    finalProfit = comboResult.summary.profit;
     finalResultType = comboResult.resultType;
     finalStatus = comboResult.finalized ? "finalized" : "pending";
   } else {
@@ -51,12 +51,6 @@ async function confirmStoredRecord(sql: Sql, id: string, resultType: ReturnType<
     finalReturnAmount = returnAmount;
     finalProfit = profit;
     finalResultType = resultType;
-  }
-
-  if (nextComboLegs && Array.isArray(nextComboLegs) && finalStatus === "pending") {
-    const pendingSummary = summarizeComboLegs(finalAmount, nextComboLegs as ComboLeg[]);
-    finalAmount = pendingSummary.amount;
-    finalRate = pendingSummary.rate;
   }
 
   const [record] = (await sql`

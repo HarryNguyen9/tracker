@@ -1,4 +1,4 @@
-import { applyComboOutcome, calculateComboBet, normalizeComboSelections, summarizeComboLegs } from "./combo";
+import { applyComboOutcome, calculateComboBet, normalizeComboSelections, recalculateComboRecord, summarizeComboLegs } from "./combo";
 
 function test(name: string, fn: () => void) {
   try {
@@ -76,4 +76,35 @@ test("pending summary uses current rate for unresolved legs", () => {
   assertApprox(summary.rate, 2.7);
   assertApprox(summary.returnAmount, 270);
   assertApprox(summary.profit, 0);
+});
+
+test("editing a finalized loss leg can move combo back to pending", () => {
+  const legs = normalizeComboSelections([{ originalRate: 2 }, { originalRate: 3 }]);
+  const first = applyComboOutcome(100, legs, 0, "loss");
+  assert(first.finalized, "combo should finalize on initial loss");
+
+  const editedLegs = first.legs.map((leg, index) => (index === 0 ? { ...leg, outcome: "WIN" as const, currentRate: 2, returnAmount: 200 } : leg));
+  const result = recalculateComboRecord(100, editedLegs);
+
+  assert(!result.finalized, "combo should return to pending while unresolved legs remain");
+  assert(result.resultType === null, "combo result should be pending");
+  assertApprox(result.returnAmount, 0);
+  assertApprox(result.profit, 0);
+});
+
+test("editing finalized combo results recalculates final values", () => {
+  const legs = normalizeComboSelections([{ originalRate: 2 }, { originalRate: 3 }]);
+  const first = applyComboOutcome(100, legs, 0, "loss");
+  const editedLegs = first.legs.map((leg, index) => {
+    if (index === 0) return { ...leg, outcome: "WIN" as const, currentRate: 2, returnAmount: 200 };
+    return { ...leg, outcome: "DRAW" as const, currentRate: 1, returnAmount: 100 };
+  });
+
+  const result = recalculateComboRecord(100, editedLegs);
+
+  assert(result.finalized, "combo should finalize when all legs are resolved");
+  assert(result.resultType === "win", "combo should win after recalculation");
+  assertApprox(result.rate, 2);
+  assertApprox(result.returnAmount, 200);
+  assertApprox(result.profit, 100);
 });

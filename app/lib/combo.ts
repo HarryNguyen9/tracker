@@ -89,6 +89,48 @@ export function summarizeComboLegs(amount: number, legs: ComboLeg[]): ComboSumma
   return { amount, rate, returnAmount, profit };
 }
 
+export function recalculateComboRecord(amount: number, legs: ComboLeg[]) {
+  const summary = summarizeComboLegs(amount, legs);
+  const hasLose = legs.some((leg) => leg.outcome === "LOSE");
+  const allWin = legs.every((leg) => leg.outcome === "WIN");
+  const allResolved = legs.every((leg) => leg.outcome !== null);
+
+  if (hasLose) {
+    return {
+      ...summary,
+      returnAmount: 0,
+      profit: -amount,
+      finalized: true,
+      resultType: "loss" as ResultType,
+    };
+  }
+
+  if (allWin) {
+    return {
+      ...summary,
+      finalized: true,
+      resultType: "win" as ResultType,
+    };
+  }
+
+  if (allResolved) {
+    const aggregateResultType = summary.profit > 0 ? "win" : summary.profit < 0 ? "loss" : "draw";
+    return {
+      ...summary,
+      finalized: true,
+      resultType: aggregateResultType as ResultType,
+    };
+  }
+
+  return {
+    ...summary,
+    returnAmount: 0,
+    profit: 0,
+    finalized: false,
+    resultType: null,
+  };
+}
+
 export function applyComboOutcome(amount: number, legs: ComboLeg[], legIndex: number, resultType: ResultType) {
   if (legIndex < 0 || legIndex >= legs.length) {
     throw new Error("Combo leg was not found.");
@@ -109,21 +151,17 @@ export function applyComboOutcome(amount: number, legs: ComboLeg[], legIndex: nu
     };
   });
 
-  const hasLose = nextLegs.some((leg) => leg.outcome === "LOSE");
-  const allWin = nextLegs.every((leg) => leg.outcome === "WIN");
-  const allResolved = nextLegs.every((leg) => leg.outcome !== null);
-  const summary = summarizeComboLegs(amount, nextLegs);
+  const recalculated = recalculateComboRecord(amount, nextLegs);
 
-  if (hasLose) {
-    return { legs: nextLegs, summary, finalized: true, resultType: "loss" as ResultType };
-  }
-  if (allWin) {
-    return { legs: nextLegs, summary, finalized: true, resultType: "win" as ResultType };
-  }
-  if (allResolved) {
-    const aggregateResultType = summary.profit > 0 ? "win" : summary.profit < 0 ? "loss" : "draw";
-    return { legs: nextLegs, summary, finalized: true, resultType: aggregateResultType as ResultType };
-  }
-
-  return { legs: nextLegs, summary, finalized: false, resultType: null };
+  return {
+    legs: nextLegs,
+    summary: {
+      amount: recalculated.amount,
+      rate: recalculated.rate,
+      returnAmount: recalculated.returnAmount,
+      profit: recalculated.profit,
+    },
+    finalized: recalculated.finalized,
+    resultType: recalculated.resultType,
+  };
 }
