@@ -34,6 +34,16 @@ function getExpectedReturn(amount: number, rate: number) {
   return amount * rate;
 }
 
+function formatProfit(value: number) {
+  return `${value > 0 ? "+" : ""}${formatMoney(value)}`;
+}
+
+function profitTextClass(value: number) {
+  if (value > 0) return "text-emerald-700 dark:text-emerald-300";
+  if (value < 0) return "text-rose-700 dark:text-rose-300";
+  return "text-ink dark:text-slate-50";
+}
+
 function parseDraftNumber(value: string) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -629,7 +639,6 @@ export default function AppShell() {
       }
       if (pendingUnlockAction === "confirm" && pendingConfirmRecordId) {
         setConfirmingRecordId(pendingConfirmRecordId);
-        setSelectedResultType("win");
       }
       setPendingUnlockAction(null);
       setPendingConfirmRecordId(null);
@@ -844,6 +853,18 @@ export default function AppShell() {
     });
   }
 
+  function startEditResult(record: RecordWithBalance) {
+    setSelectedResultType(record.resultType ?? "win");
+    if (!editMode) {
+      setPendingConfirmRecordId(record.id);
+      openPinFor("confirm");
+      return;
+    }
+    setSelectedResultType(record.resultType ?? "win");
+    setConfirmingRecordId(record.id);
+    setExpandedRecordId(record.id);
+  }
+
   async function removeRecord(record: RecordWithBalance) {
     if (!editMode) {
       openPinFor("record");
@@ -868,6 +889,10 @@ export default function AppShell() {
   }
 
   function startEditRecord(record: RecordWithBalance) {
+    if (record.status === "finalized") {
+      startEditResult(record);
+      return;
+    }
     if (!editMode) {
       setPendingEditRecordId(record.id);
       openPinFor("record");
@@ -996,7 +1021,7 @@ export default function AppShell() {
       <section className="grid gap-3 sm:grid-cols-5">
         <Metric label="Total Amount" value={formatMoney(totalSummary.amount)} />
         <Metric label="Total Return" value={formatMoney(totalSummary.valueReturn)} />
-        <Metric label="Total Profit" value={formatMoney(totalSummary.profit)} positive={totalSummary.profit >= 0} />
+        <Metric label="Total Profit" value={formatProfit(totalSummary.profit)} positive={totalSummary.profit >= 0} />
         <Metric label="Finalized Records" value={formatNumber(totalSummary.finalizedCount)} />
         <Metric label="Pending Records" value={formatNumber(totalSummary.pendingCount)} />
       </section>
@@ -1098,7 +1123,7 @@ export default function AppShell() {
                 <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
                   <MiniMetric label="Amount" value={formatMoney(player.totalAmount)} />
                   <MiniMetric label="Return" value={formatMoney(player.totalReturn)} />
-                  <MiniMetric label="Profit" value={formatMoney(player.totalProfit)} />
+                  <MiniMetric label="Profit" value={formatProfit(player.totalProfit)} valueClassName={profitTextClass(player.totalProfit)} />
                   <MiniMetric label="Balance" value={formatMoney(player.balance)} />
                 </div>
                 {editMode ? (
@@ -1156,7 +1181,7 @@ export default function AppShell() {
                   <SummaryTile accent="emerald" icon="$" label="Current Balance" value={formatMoney(selectedPlayer.balance)} />
                   <SummaryTile accent="slate" icon="A" label="Total Amount" value={formatMoney(selectedPlayer.totalAmount)} />
                   <SummaryTile accent="sky" icon="R" label="Total Return" value={formatMoney(selectedPlayer.totalReturn)} />
-                  <SummaryTile accent={selectedPlayer.totalProfit < 0 ? "rose" : "emerald"} icon="P" label="Total Profit" value={formatMoney(selectedPlayer.totalProfit)} />
+                  <SummaryTile accent={selectedPlayer.totalProfit < 0 ? "rose" : "emerald"} icon="P" label="Total Profit" value={formatProfit(selectedPlayer.totalProfit)} />
                   <SummaryTile accent="emerald" icon="W" label="Win Count" value={formatNumber(selectedPlayer.winCount)} />
                   <SummaryTile accent="rose" icon="L" label="Loss Count" value={formatNumber(selectedPlayer.lossCount)} />
                   <SummaryTile accent="amber" icon="D" label="Draw Count" value={formatNumber(selectedPlayer.drawCount)} />
@@ -1334,7 +1359,7 @@ export default function AppShell() {
                               <p className="font-bold text-emerald-900 dark:text-emerald-100">Amount: {formatMoney(draftComboResult.amount)}</p>
                               <p className="font-bold text-emerald-900 dark:text-emerald-100">Final Rate: {draftComboResult.rate.toFixed(4)}</p>
                               <p className="font-bold text-emerald-900 dark:text-emerald-100">Return: {formatMoney(draftComboResult.returnAmount)}</p>
-                              <p className="font-bold text-emerald-900 dark:text-emerald-100">Current Profit: {formatMoney(draftComboResult.profit)}</p>
+                              <p className={`font-bold ${profitTextClass(draftComboResult.profit)}`}>Current Profit: {formatProfit(draftComboResult.profit)}</p>
                             </div>
                           </div>
                         ) : null}
@@ -1438,8 +1463,8 @@ export default function AppShell() {
                       <div className="mt-4 flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
                         <div>
                           <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">{summaryLabel}</p>
-                          <p className={`mt-1 text-lg font-bold ${summaryValue < 0 ? "text-rose-700 dark:text-rose-300" : "text-ink dark:text-slate-50"}`}>
-                            {formatMoney(summaryValue)}
+                          <p className={`mt-1 text-lg font-bold ${record.status === "pending" ? "text-ink dark:text-slate-50" : profitTextClass(summaryValue)}`}>
+                            {record.status === "pending" ? formatMoney(summaryValue) : formatProfit(summaryValue)}
                           </p>
                         </div>
                         <span className="text-sm font-bold text-slate-500 dark:text-slate-400">{isExpanded ? "Hide Details" : "View Details"}</span>
@@ -1448,8 +1473,8 @@ export default function AppShell() {
                     {isExpanded ? (
                       <>
                     <div className="mt-4 flex gap-2">
-                      <button className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold dark:bg-white/10" onClick={() => startEditRecord(record)} type="button">
-                        Edit Record
+                      <button className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold dark:bg-white/10" onClick={() => (record.status === "finalized" ? startEditResult(record) : startEditRecord(record))} type="button">
+                        {record.status === "finalized" ? "Edit Result" : "Edit Record"}
                       </button>
                       {editMode ? (
                         <button className="flex-1 rounded-2xl bg-rose-50 py-2 text-sm font-bold text-rose-700 dark:bg-rose-400/10 dark:text-rose-200" onClick={() => removeRecord(record)} type="button">
@@ -1466,7 +1491,7 @@ export default function AppShell() {
                       <MiniMetric label="Status" value={record.status === "pending" ? "Pending" : "Finalized"} />
                       <MiniMetric label="Result" value={record.resultType ? resultLabels[record.resultType] : "Pending"} />
                       <MiniMetric label={record.status === "pending" ? "Expected Return" : "Return"} value={record.status === "pending" ? formatMoney(expectedReturn) : formatMoney(record.returnAmount)} />
-                      <MiniMetric label="Profit" value={record.status === "pending" ? "-" : formatMoney(record.profit)} />
+                      <MiniMetric label="Profit" value={record.status === "pending" ? "-" : formatProfit(record.profit)} valueClassName={record.status === "pending" ? undefined : profitTextClass(record.profit)} />
                       <MiniMetric label="Balance" value={record.balance === null ? "-" : formatMoney(record.balance)} />
                     </div>
                     {record.comboLegs?.length ? (
@@ -1518,13 +1543,13 @@ export default function AppShell() {
                         </button>
                       </div>
                     ) : null}
-                    {record.status === "pending" && !record.comboLegs?.length ? (
+                    {(record.status === "pending" || confirmingRecordId === record.id) && !record.comboLegs?.length ? (
                       <div className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
                         {confirmingRecordId === record.id ? (
                           <div className="flex flex-col gap-4">
                             {!record.comboLegs?.length ? (
                             <div>
-                              <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">Select Result</p>
+                              <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">{record.status === "pending" ? "Select Result" : "Edit Result"}</p>
                               <div className="flex flex-wrap gap-1 rounded-2xl bg-slate-100 p-1 dark:bg-white/10">
                                 {resultOptions.map((resultType) => {
                                   const isActive = selectedResultType === resultType;
@@ -1607,7 +1632,7 @@ export default function AppShell() {
                                   onClick={() => confirmRecord(record.id, selectedResultType)}
                                   type="button"
                                 >
-                                  Confirm
+                                  {record.status === "pending" ? "Confirm" : "Save Result"}
                                 </button>
                               <button
                                 className="rounded-2xl bg-slate-200 px-4 py-3 font-bold dark:bg-white/10"
@@ -1714,10 +1739,7 @@ export default function AppShell() {
           editMode={editMode}
           onCancel={() => setFinalizedOpen(false)}
           onConfirmLeg={(recordId, legIndex, resultType) => confirmRecord(recordId, resultType, legIndex)}
-          onEditRecord={(record) => {
-            setFinalizedOpen(false);
-            startEditRecord(record);
-          }}
+          onConfirmResult={(recordId, resultType) => confirmRecord(recordId, resultType)}
           onOpenEditAccess={(recordId) => {
             setPendingConfirmRecordId(recordId);
             openPinFor("confirm");
@@ -1729,7 +1751,9 @@ export default function AppShell() {
           onSetConfirmingRecordId={setConfirmingRecordId}
           records={finalizedRecords}
           selectedComboResult={selectedComboResult}
+          selectedResultType={selectedResultType}
           setSelectedComboResult={setSelectedComboResult}
+          setSelectedResultType={setSelectedResultType}
         />
       ) : null}
 
@@ -1796,7 +1820,7 @@ export default function AppShell() {
                   <SummaryTile accent="emerald" icon="$" label="Current Balance" value={formatMoney(selectedPlayer.balance)} />
                   <SummaryTile accent="slate" icon="A" label="Total Amount" value={formatMoney(selectedPlayer.totalAmount)} />
                   <SummaryTile accent="sky" icon="R" label="Total Return" value={formatMoney(selectedPlayer.totalReturn)} />
-                  <SummaryTile accent={selectedPlayer.totalProfit < 0 ? "rose" : "emerald"} icon="P" label="Total Profit" value={formatMoney(selectedPlayer.totalProfit)} />
+                  <SummaryTile accent={selectedPlayer.totalProfit < 0 ? "rose" : "emerald"} icon="P" label="Total Profit" value={formatProfit(selectedPlayer.totalProfit)} />
                   <SummaryTile accent="emerald" icon="W" label="Win Count" value={formatNumber(selectedPlayer.winCount)} />
                   <SummaryTile accent="rose" icon="L" label="Loss Count" value={formatNumber(selectedPlayer.lossCount)} />
                   <SummaryTile accent="amber" icon="D" label="Draw Count" value={formatNumber(selectedPlayer.drawCount)} />
@@ -1974,7 +1998,7 @@ export default function AppShell() {
                               <p className="font-bold text-emerald-900 dark:text-emerald-100">Amount: {formatMoney(draftComboResult.amount)}</p>
                               <p className="font-bold text-emerald-900 dark:text-emerald-100">Final Rate: {draftComboResult.rate.toFixed(4)}</p>
                               <p className="font-bold text-emerald-900 dark:text-emerald-100">Return: {formatMoney(draftComboResult.returnAmount)}</p>
-                              <p className="font-bold text-emerald-900 dark:text-emerald-100">Current Profit: {formatMoney(draftComboResult.profit)}</p>
+                              <p className={`font-bold ${profitTextClass(draftComboResult.profit)}`}>Current Profit: {formatProfit(draftComboResult.profit)}</p>
                             </div>
                           </div>
                         ) : null}
@@ -2078,8 +2102,8 @@ export default function AppShell() {
                       <div className="mt-4 flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
                         <div>
                           <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">{summaryLabel}</p>
-                          <p className={`mt-1 text-lg font-bold ${summaryValue < 0 ? "text-rose-700 dark:text-rose-300" : "text-ink dark:text-slate-50"}`}>
-                            {formatMoney(summaryValue)}
+                          <p className={`mt-1 text-lg font-bold ${record.status === "pending" ? "text-ink dark:text-slate-50" : profitTextClass(summaryValue)}`}>
+                            {record.status === "pending" ? formatMoney(summaryValue) : formatProfit(summaryValue)}
                           </p>
                         </div>
                         <span className="text-sm font-bold text-slate-500 dark:text-slate-400">{isExpanded ? "Hide Details" : "View Details"}</span>
@@ -2088,8 +2112,8 @@ export default function AppShell() {
                     {isExpanded ? (
                       <>
                     <div className="mt-4 flex gap-2">
-                      <button className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold dark:bg-white/10" onClick={() => startEditRecord(record)} type="button">
-                        Edit Record
+                      <button className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold dark:bg-white/10" onClick={() => (record.status === "finalized" ? startEditResult(record) : startEditRecord(record))} type="button">
+                        {record.status === "finalized" ? "Edit Result" : "Edit Record"}
                       </button>
                       {editMode ? (
                         <button className="flex-1 rounded-2xl bg-rose-50 py-2 text-sm font-bold text-rose-700 dark:bg-rose-400/10 dark:text-rose-200" onClick={() => removeRecord(record)} type="button">
@@ -2106,7 +2130,7 @@ export default function AppShell() {
                       <MiniMetric label="Status" value={record.status === "pending" ? "Pending" : "Finalized"} />
                       <MiniMetric label="Result" value={record.resultType ? resultLabels[record.resultType] : "Pending"} />
                       <MiniMetric label={record.status === "pending" ? "Expected Return" : "Return"} value={record.status === "pending" ? formatMoney(expectedReturn) : formatMoney(record.returnAmount)} />
-                      <MiniMetric label="Profit" value={record.status === "pending" ? "-" : formatMoney(record.profit)} />
+                      <MiniMetric label="Profit" value={record.status === "pending" ? "-" : formatProfit(record.profit)} valueClassName={record.status === "pending" ? undefined : profitTextClass(record.profit)} />
                       <MiniMetric label="Balance" value={record.balance === null ? "-" : formatMoney(record.balance)} />
                     </div>
                     {record.comboLegs?.length ? (
@@ -2158,13 +2182,13 @@ export default function AppShell() {
                         </button>
                       </div>
                     ) : null}
-                    {record.status === "pending" && !record.comboLegs?.length ? (
+                    {(record.status === "pending" || confirmingRecordId === record.id) && !record.comboLegs?.length ? (
                       <div className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
                         {confirmingRecordId === record.id ? (
                           <div className="flex flex-col gap-4">
                             {!record.comboLegs?.length ? (
                             <div>
-                              <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">Select Result</p>
+                              <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">{record.status === "pending" ? "Select Result" : "Edit Result"}</p>
                               <div className="flex flex-wrap gap-1 rounded-2xl bg-slate-100 p-1 dark:bg-white/10">
                                 {resultOptions.map((resultType) => {
                                   const isActive = selectedResultType === resultType;
@@ -2247,7 +2271,7 @@ export default function AppShell() {
                                   onClick={() => confirmRecord(record.id, selectedResultType)}
                                   type="button"
                                 >
-                                  Confirm
+                                  {record.status === "pending" ? "Confirm" : "Save Result"}
                                 </button>
                               <button
                                 className="rounded-2xl bg-slate-200 px-4 py-3 font-bold dark:bg-white/10"
@@ -2795,26 +2819,30 @@ function FinalizedRecordsDialog({
   editMode,
   onCancel,
   onConfirmLeg,
-  onEditRecord,
+  onConfirmResult,
   onOpenEditAccess,
   onRemoveRecord,
   onSetConfirmingRecordId,
   records,
   selectedComboResult,
+  selectedResultType,
   setSelectedComboResult,
+  setSelectedResultType,
 }: {
   busy: boolean;
   confirmingRecordId: string | null;
   editMode: boolean;
   onCancel: () => void;
   onConfirmLeg: (recordId: string, legIndex: number, resultType: ResultType) => void;
-  onEditRecord: (record: RecordWithBalance) => void;
+  onConfirmResult: (recordId: string, resultType: ResultType) => void;
   onOpenEditAccess: (recordId: string) => void;
   onRemoveRecord: (record: RecordWithBalance) => void;
   onSetConfirmingRecordId: (recordId: string | null) => void;
   records: RecordWithBalance[];
   selectedComboResult: (record: RecordWithBalance, legIndex: number) => ComboResultChoice;
+  selectedResultType: ResultType;
   setSelectedComboResult: (recordId: string, legIndex: number, resultType: ComboResultChoice) => void;
+  setSelectedResultType: (resultType: ResultType) => void;
 }) {
   const totalProfit = records.reduce((sum, r) => sum + r.profit, 0);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -2844,7 +2872,7 @@ function FinalizedRecordsDialog({
           <div className={`mt-5 rounded-2xl border p-4 text-center ${totalProfit >= 0 ? "border-emerald-100 bg-emerald-50 dark:border-emerald-400/20 dark:bg-emerald-400/10" : "border-rose-100 bg-rose-50 dark:border-rose-400/20 dark:bg-rose-400/10"}`}>
             <p className="text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Total Profit / Loss</p>
             <p className={`mt-1 text-3xl font-black ${totalProfit >= 0 ? "text-emerald-800 dark:text-emerald-200" : "text-rose-800 dark:text-rose-200"}`}>
-              {totalProfit >= 0 ? "+" : ""}{formatMoney(totalProfit)}
+              {formatProfit(totalProfit)}
             </p>
           </div>
         ) : null}
@@ -2872,8 +2900,8 @@ function FinalizedRecordsDialog({
                   <div className="mt-4 flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
                     <div>
                       <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Profit</p>
-                      <p className={`mt-1 text-lg font-bold ${record.profit < 0 ? "text-rose-700 dark:text-rose-300" : "text-ink dark:text-slate-50"}`}>
-                        {formatMoney(record.profit)}
+                      <p className={`mt-1 text-lg font-bold ${profitTextClass(record.profit)}`}>
+                        {formatProfit(record.profit)}
                       </p>
                     </div>
                     <span className="text-sm font-bold text-slate-500 dark:text-slate-400">{isExpanded ? "Hide Details" : "View Details"}</span>
@@ -2882,8 +2910,20 @@ function FinalizedRecordsDialog({
                 {isExpanded ? (
                   <>
                     <div className="mt-4 flex gap-2">
-                      <button className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold dark:bg-white/10" onClick={() => onEditRecord(record)} type="button">
-                        Edit Record
+                      <button
+                        className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold dark:bg-white/10"
+                        onClick={() => {
+                          setSelectedResultType(record.resultType ?? "win");
+                          if (!editMode) {
+                            onOpenEditAccess(record.id);
+                            return;
+                          }
+                          onSetConfirmingRecordId(record.id);
+                          setExpandedId(record.id);
+                        }}
+                        type="button"
+                      >
+                        {record.comboLegs?.length ? "Edit Results" : "Edit Result"}
                       </button>
                       {editMode ? (
                         <button className="flex-1 rounded-2xl bg-rose-50 py-2 text-sm font-bold text-rose-700 dark:bg-rose-400/10 dark:text-rose-200" onClick={() => onRemoveRecord(record)} type="button">
@@ -2896,7 +2936,7 @@ function FinalizedRecordsDialog({
                       <MiniMetric label="Rate" value={formatNumber(record.rate)} />
                       <MiniMetric label="Result" value={record.resultType ? resultLabels[record.resultType] : "-"} />
                       <MiniMetric label="Return" value={formatMoney(record.returnAmount)} />
-                      <MiniMetric label="Profit" value={formatMoney(record.profit)} />
+                      <MiniMetric label="Profit" value={formatProfit(record.profit)} valueClassName={profitTextClass(record.profit)} />
                       <MiniMetric label="Balance" value={record.balance === null ? "-" : formatMoney(record.balance)} />
                       <MiniMetric label="Status" value="Finalized" />
                     </div>
@@ -2911,22 +2951,34 @@ function FinalizedRecordsDialog({
                         setSelectedComboResult={(legIndex, resultType) => setSelectedComboResult(record.id, legIndex, resultType)}
                       />
                     ) : null}
-                    {record.comboLegs?.length && confirmingRecordId !== record.id ? (
-                      <div className="mt-5">
-                        <button
-                          className="w-full rounded-2xl bg-slate-100 py-3 text-sm font-bold text-ink active:scale-95 dark:bg-white/10 dark:text-slate-50"
-                          onClick={() => {
-                            if (!editMode) {
-                              onOpenEditAccess(record.id);
-                              return;
-                            }
-                            onSetConfirmingRecordId(record.id);
-                            setExpandedId(record.id);
-                          }}
-                          type="button"
-                        >
-                          Edit Results
-                        </button>
+                    {!record.comboLegs?.length && confirmingRecordId === record.id ? (
+                      <div className="mt-4 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
+                        <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Edit Result</p>
+                        <div className="flex flex-col gap-3 sm:grid sm:grid-cols-[1fr_auto_auto]">
+                          <select
+                            className="input min-h-11"
+                            disabled={busy}
+                            onChange={(event) => setSelectedResultType(event.target.value as ResultType)}
+                            value={selectedResultType}
+                          >
+                            {resultOptions.map((resultType) => (
+                              <option key={resultType} value={resultType}>
+                                {resultLabels[resultType]}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            className="rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+                            disabled={busy}
+                            onClick={() => onConfirmResult(record.id, selectedResultType)}
+                            type="button"
+                          >
+                            Save Result
+                          </button>
+                          <button className="rounded-2xl bg-slate-200 px-4 py-3 font-bold dark:bg-white/10" onClick={() => onSetConfirmingRecordId(null)} type="button">
+                            Cancel
+                          </button>
+                        </div>
                       </div>
                     ) : null}
                     {record.note ? (
@@ -2985,11 +3037,11 @@ function SummaryTile({
   );
 }
 
-function MiniMetric({ label, value }: { label: string; value: string }) {
+function MiniMetric({ label, value, valueClassName }: { label: string; value: string; valueClassName?: string }) {
   return (
     <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
       <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</p>
-      <p className="mt-1 break-words font-bold text-ink dark:text-slate-50">{value}</p>
+      <p className={`mt-1 break-words font-bold ${valueClassName ?? "text-ink dark:text-slate-50"}`}>{value}</p>
     </div>
   );
 }
@@ -3082,10 +3134,10 @@ function ComboLegDetails({
 }
 
 function ProfitBadge({ value }: { value: number }) {
-  const positive = value >= 0;
+  const positive = value > 0;
   return (
-    <span className={`rounded-full px-3 py-1 text-sm font-bold ${positive ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200" : "bg-rose-100 text-rose-800 dark:bg-rose-400/15 dark:text-rose-200"}`}>
-      {formatMoney(value)}
+    <span className={`rounded-full px-3 py-1 text-sm font-bold ${positive ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200" : value < 0 ? "bg-rose-100 text-rose-800 dark:bg-rose-400/15 dark:text-rose-200" : "bg-slate-100 text-slate-700 dark:bg-white/10 dark:text-slate-200"}`}>
+      {formatProfit(value)}
     </span>
   );
 }

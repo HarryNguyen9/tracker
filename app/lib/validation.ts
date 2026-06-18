@@ -66,3 +66,33 @@ export function calculateRecordValues(amount: number, rate: number, resultType: 
   const returnAmount = amount * rate;
   return { returnAmount, profit: returnAmount - amount };
 }
+
+export function prepareFinalizedRecordUpdate({
+  body,
+  existingAmount,
+  existingNote,
+  existingRate,
+  existingResultType,
+}: {
+  body: Record<string, unknown>;
+  existingAmount: number;
+  existingNote: string | null;
+  existingRate: number;
+  existingResultType: ResultType | null;
+}) {
+  const resultType = body.resultType === undefined ? existingResultType : parseResultType(body.resultType);
+
+  if (!resultType) {
+    throw new Error("Result is required.");
+  }
+
+  const { returnAmount, profit } = calculateRecordValues(existingAmount, existingRate, resultType);
+  return {
+    amount: existingAmount,
+    rate: existingRate,
+    resultType,
+    returnAmount,
+    profit,
+    note: existingNote,
+  };
+}

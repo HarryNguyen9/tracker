@@ -4,14 +4,14 @@ import { getSql, type RecordRow } from "../../../lib/db";
 import { jsonError } from "../../../lib/http";
 import { mapRecord } from "../../../lib/mappers";
 import { ensureTrackerSchema, ensureTrackerSchemaIfNeeded } from "../../../lib/schema";
-import { calculateRecordValues, cleanOptionalText, cleanText, parseGreaterThanZeroNumber, parseNonNegativeNumber, parseResultType } from "../../../lib/validation";
+import { cleanOptionalText, cleanText, parseGreaterThanZeroNumber, parseNonNegativeNumber, prepareFinalizedRecordUpdate } from "../../../lib/validation";
 import { normalizeComboSelections, summarizeComboLegs } from "../../../lib/combo";
 import type { ComboSelection } from "../../../lib/types";
 
 type Params = { params: { id: string } };
 type Sql = ReturnType<typeof getSql>;
 
-async function updateRecord(sql: Sql, id: string, body: Record<string, unknown>, note: string | null) {
+async function updateRecord(sql: Sql, id: string, body: Record<string, unknown>) {
   const [existing] = (await sql`
     select id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, combo_legs, created_at, updated_at
     from records
@@ -24,6 +24,7 @@ async function updateRecord(sql: Sql, id: string, body: Record<string, unknown>,
   }
 
   if (existing.status === "pending") {
+    const note = cleanOptionalText(body.note);
     const comboLegs = Array.isArray(body.comboLegs) ? normalizeComboSelections(body.comboLegs as ComboSelection[]) : null;
     const amount = parseGreaterThanZeroNumber(body.amount, "Amount");
     const comboSummary = comboLegs ? summarizeComboLegs(amount, comboLegs) : null;
@@ -45,23 +46,21 @@ async function updateRecord(sql: Sql, id: string, body: Record<string, unknown>,
     return record;
   }
 
-  const amount = body.amount === undefined ? Number(existing.amount) : parseGreaterThanZeroNumber(body.amount, "Amount");
-  const rate = body.rate === undefined ? Number(existing.rate) : parseNonNegativeNumber(body.rate, "Rate");
-  const resultType = body.resultType === undefined ? existing.result_type : parseResultType(body.resultType);
-
-  if (!resultType) {
-    throw new Error("Result is required.");
-  }
-
-  const { returnAmount, profit } = calculateRecordValues(amount, rate, resultType);
+  const update = prepareFinalizedRecordUpdate({
+    body,
+    existingAmount: Number(existing.amount),
+    existingNote: existing.note,
+    existingRate: Number(existing.rate),
+    existingResultType: existing.result_type,
+  });
   const [record] = (await sql`
     update records
-    set amount = ${amount},
-        rate = ${rate},
-        result_type = ${resultType},
-        return_amount = ${returnAmount},
-        profit = ${profit},
-        note = ${note},
+    set amount = ${update.amount},
+        rate = ${update.rate},
+        result_type = ${update.resultType},
+        return_amount = ${update.returnAmount},
+        profit = ${update.profit},
+        note = ${update.note},
         updated_at = now()
     where id = ${id}
     returning id, player_id, amount, rate, status, result_type, return_amount, profit, note, deleted_at, delete_reason, combo_legs, created_at, updated_at
@@ -74,16 +73,15 @@ export async function PATCH(request: Request, { params }: Params) {
   try {
     requireEditAccess();
     const body = (await request.json()) as Record<string, unknown>;
-    const note = cleanOptionalText(body.note);
     const sql = getSql();
     let record: RecordRow | null;
     try {
-      record = await updateRecord(sql, params.id, body, note);
+      record = await updateRecord(sql, params.id, body);
     } catch (error) {
       if (!(await ensureTrackerSchemaIfNeeded(error, sql))) {
         throw error;
       }
-      record = await updateRecord(sql, params.id, body, note);
+      record = await updateRecord(sql, params.id, body);
     }
 
     if (!record) {
