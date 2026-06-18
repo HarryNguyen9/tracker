@@ -1678,7 +1678,7 @@ export default function AppShell() {
       </section>
 
       {pinOpen ? (
-        <div className="fixed inset-0 z-50 flex items-end bg-ink/60 p-4 backdrop-blur-sm sm:items-center sm:justify-center">
+        <div className="fixed inset-0 z-[70] flex items-end bg-ink/60 p-4 backdrop-blur-sm sm:items-center sm:justify-center">
           <form className="w-full rounded-[1.5rem] border border-white/80 bg-white p-5 shadow-soft dark:border-emerald-400/20 dark:bg-[#17231f] sm:max-w-sm" onSubmit={verifyPin}>
             <h2 className="text-xl font-bold">Enter Edit PIN</h2>
             <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Enter the edit PIN to make changes.</p>
@@ -2354,7 +2354,7 @@ function ConfirmDialog({
   }, []);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end bg-ink/60 p-4 backdrop-blur-sm sm:items-center sm:justify-center">
+    <div className="fixed inset-0 z-[70] flex items-end bg-ink/60 p-4 backdrop-blur-sm sm:items-center sm:justify-center">
       <section className="w-full rounded-[1.5rem] border border-white/80 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-[#121d19] sm:max-w-sm">
         <p className="text-sm font-bold uppercase tracking-wide text-rose-700 dark:text-rose-300">Confirm Action</p>
         <h2 className="mt-2 text-xl font-bold">{title}</h2>
