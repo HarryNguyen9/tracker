@@ -69,6 +69,12 @@ test("creation preview multiplies all rates", () => {
   assertApprox(result.netProfit, 200);
 });
 
+test("combo rate rounds instead of flooring decimal precision", () => {
+  const result = calculateComboBet(5, [1.63, 1.7, 1.53, 1.85]);
+  assertApprox(result.finalRate, 7.8433);
+  assertApprox(result.returnAmount, 39.2165);
+});
+
 test("pending summary uses current rate for unresolved legs", () => {
   const legs = normalizeComboSelections([{ originalRate: 2 }, { originalRate: 1.8 }]);
   const first = applyComboOutcome(100, legs, 0, "win_half");

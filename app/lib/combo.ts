@@ -11,7 +11,7 @@ export type ComboBetResult = {
 };
 
 function roundRate(value: number): number {
-  return Math.floor(value * 10000) / 10000;
+  return Math.round((value + Number.EPSILON) * 10000) / 10000;
 }
 
 export function calculateComboBet(amount: number, rates: number[]): ComboBetResult {

@@ -1255,10 +1255,10 @@ export default function AppShell() {
                             value={draft.amount}
                           />
                         </Field>
-                        <div className="flex rounded-2xl border border-slate-200 bg-white p-1 dark:border-white/10 dark:bg-white/[0.04]">
+                        <div className="grid grid-cols-3 rounded-2xl border border-slate-200 bg-white p-1 dark:border-white/10 dark:bg-white/[0.04]">
                           <button
                             aria-pressed={!draft.comboMode && !draft.batchMode}
-                            className={`rounded-xl px-4 py-3 text-sm font-bold transition active:scale-95 ${!draft.comboMode && !draft.batchMode ? "bg-ink text-white dark:bg-emerald-500 dark:text-ink" : "text-slate-500 dark:text-slate-300"}`}
+                            className={`rounded-xl px-3 py-3 text-sm font-bold transition active:scale-95 ${!draft.comboMode && !draft.batchMode ? "bg-ink text-white dark:bg-emerald-500 dark:text-ink" : "text-slate-500 dark:text-slate-300"}`}
                             onClick={() => setDraft((current) => ({ ...current, batchMode: false, comboMode: false, comboSelections: [] }))}
                             type="button"
                           >
@@ -1267,7 +1267,7 @@ export default function AppShell() {
                           {!editingRecord ? (
                             <button
                               aria-pressed={draft.batchMode}
-                              className={`rounded-xl px-4 py-3 text-sm font-bold transition active:scale-95 ${draft.batchMode ? "bg-emerald-600 text-white" : "text-slate-500 dark:text-slate-300"}`}
+                              className={`rounded-xl px-3 py-3 text-sm font-bold transition active:scale-95 ${draft.batchMode ? "bg-emerald-600 text-white" : "text-slate-500 dark:text-slate-300"}`}
                               onClick={() => setDraft((current) => ({ ...current, batchMode: true, comboMode: false, comboSelections: [] }))}
                               type="button"
                             >
@@ -1276,7 +1276,7 @@ export default function AppShell() {
                           ) : null}
                           <button
                             aria-pressed={draft.comboMode}
-                            className={`rounded-xl px-4 py-3 text-sm font-bold transition active:scale-95 ${draft.comboMode ? "bg-emerald-600 text-white" : "text-slate-500 dark:text-slate-300"}`}
+                            className={`rounded-xl px-3 py-3 text-sm font-bold transition active:scale-95 ${draft.comboMode ? "bg-emerald-600 text-white" : "text-slate-500 dark:text-slate-300"}`}
                             onClick={() => setDraft((current) => ({ ...current, batchMode: false, comboMode: true }))}
                             type="button"
                           >
@@ -1388,7 +1388,7 @@ export default function AppShell() {
                         {draft.comboSelections.map((sel, idx) => (
                           <div className="mb-2 grid grid-cols-[auto_1fr_auto] items-center gap-2 rounded-2xl border border-slate-100 bg-slate-50 p-2 dark:border-white/10 dark:bg-[#121d19]" key={idx}>
                             <span className="flex size-9 items-center justify-center rounded-full bg-white text-xs font-black text-slate-500 dark:bg-white/10 dark:text-slate-300">{idx + 1}</span>
-                            <div className="grid gap-2">
+                            <div className="grid gap-2 sm:grid-cols-2">
                               <input
                                 className="input"
                                 inputMode="decimal"
@@ -1960,10 +1960,10 @@ export default function AppShell() {
                             value={draft.amount}
                           />
                         </Field>
-                        <div className="flex rounded-2xl border border-slate-200 bg-white p-1 dark:border-white/10 dark:bg-white/[0.04]">
+                        <div className="grid grid-cols-3 rounded-2xl border border-slate-200 bg-white p-1 dark:border-white/10 dark:bg-white/[0.04]">
                           <button
                             aria-pressed={!draft.comboMode && !draft.batchMode}
-                            className={`rounded-xl px-4 py-3 text-sm font-bold transition active:scale-95 ${!draft.comboMode && !draft.batchMode ? "bg-ink text-white dark:bg-emerald-500 dark:text-ink" : "text-slate-500 dark:text-slate-300"}`}
+                            className={`rounded-xl px-3 py-3 text-sm font-bold transition active:scale-95 ${!draft.comboMode && !draft.batchMode ? "bg-ink text-white dark:bg-emerald-500 dark:text-ink" : "text-slate-500 dark:text-slate-300"}`}
                             onClick={() => setDraft((current) => ({ ...current, batchMode: false, comboMode: false, comboSelections: [] }))}
                             type="button"
                           >
@@ -1972,7 +1972,7 @@ export default function AppShell() {
                           {!editingRecord ? (
                             <button
                               aria-pressed={draft.batchMode}
-                              className={`rounded-xl px-4 py-3 text-sm font-bold transition active:scale-95 ${draft.batchMode ? "bg-emerald-600 text-white" : "text-slate-500 dark:text-slate-300"}`}
+                              className={`rounded-xl px-3 py-3 text-sm font-bold transition active:scale-95 ${draft.batchMode ? "bg-emerald-600 text-white" : "text-slate-500 dark:text-slate-300"}`}
                               onClick={() => setDraft((current) => ({ ...current, batchMode: true, comboMode: false, comboSelections: [] }))}
                               type="button"
                             >
@@ -1981,7 +1981,7 @@ export default function AppShell() {
                           ) : null}
                           <button
                             aria-pressed={draft.comboMode}
-                            className={`rounded-xl px-4 py-3 text-sm font-bold transition active:scale-95 ${draft.comboMode ? "bg-emerald-600 text-white" : "text-slate-500 dark:text-slate-300"}`}
+                            className={`rounded-xl px-3 py-3 text-sm font-bold transition active:scale-95 ${draft.comboMode ? "bg-emerald-600 text-white" : "text-slate-500 dark:text-slate-300"}`}
                             onClick={() => setDraft((current) => ({ ...current, batchMode: false, comboMode: true }))}
                             type="button"
                           >
@@ -2037,7 +2037,7 @@ export default function AppShell() {
                         {draft.batchSingles.map((item, idx) => (
                           <div className="mb-2 grid grid-cols-[auto_1fr_auto] items-center gap-2 rounded-2xl border border-slate-100 bg-slate-50 p-2 dark:border-white/10 dark:bg-[#121d19]" key={idx}>
                             <span className="flex size-9 items-center justify-center rounded-full bg-white text-xs font-black text-slate-500 dark:bg-white/10 dark:text-slate-300">{idx + 1}</span>
-                            <div className="grid gap-2">
+                            <div className="grid min-w-0 gap-2 sm:grid-cols-2">
                               <input
                                 className="input"
                                 inputMode="decimal"
