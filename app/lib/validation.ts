@@ -96,3 +96,22 @@ export function prepareFinalizedRecordUpdate({
     note: existingNote,
   };
 }
+
+export function prepareBatchSingleRecords({ amount, records }: { amount: unknown; records: unknown }) {
+  const sharedAmount = parseGreaterThanZeroNumber(amount, "Amount");
+  if (!Array.isArray(records) || records.length === 0) {
+    throw new Error("Add at least one record.");
+  }
+
+  return records.map((entry, index) => {
+    if (!entry || typeof entry !== "object") {
+      throw new Error(`Record ${index + 1} is invalid.`);
+    }
+    const row = entry as Record<string, unknown>;
+    return {
+      amount: sharedAmount,
+      rate: parseNonNegativeNumber(row.rate, `Rate ${index + 1}`),
+      note: cleanOptionalText(row.note),
+    };
+  });
+}

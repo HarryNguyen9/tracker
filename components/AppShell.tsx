@@ -6,7 +6,8 @@ import type { ComboSelection, ComboSelectionOutcome, PlayerSummary, RecordItem, 
 import { normalizeComboSelections, summarizeComboLegs } from "../app/lib/combo";
 
 type LoadState = "idle" | "loading" | "ready" | "error";
-type RecordDraft = { amount: string; rate: string; note: string; comboMode: boolean; comboSelections: ComboSelection[]; resultType: ResultType };
+type BatchSingleDraft = { rate: string; note: string };
+type RecordDraft = { amount: string; rate: string; note: string; comboMode: boolean; batchMode: boolean; batchSingles: BatchSingleDraft[]; comboSelections: ComboSelection[]; resultType: ResultType };
 type PendingUnlockAction = "player" | "record" | "confirm" | null;
 type PendingDelete = { type: "player"; player: PlayerSummary } | { type: "record"; record: RecordWithBalance } | null;
 type ScheduleTab = "schedule" | "knockout" | "groups";
@@ -24,7 +25,7 @@ type GroupStanding = {
 
 const comboOutcomeLabels: Record<string, string> = { WIN: "Win", HALF_WIN: "Half Win", DRAW: "Draw", HALF_LOSE: "Half Lose", LOSE: "Lose" };
 const comboOutcomeOptions: ComboSelectionOutcome[] = ["WIN", "HALF_WIN", "DRAW", "HALF_LOSE", "LOSE"];
-const emptyRecordDraft: RecordDraft = { amount: "", rate: "", note: "", comboMode: false, comboSelections: [], resultType: "win" };
+const emptyRecordDraft: RecordDraft = { amount: "", rate: "", note: "", comboMode: false, batchMode: false, batchSingles: [{ rate: "", note: "" }], comboSelections: [], resultType: "win" };
 const resultLabels: Record<ResultType, string> = { win: "Win", loss: "Loss", draw: "Draw", win_half: "Win Half", loss_half: "Loss Half" };
 const resultOptions: ResultType[] = ["win", "win_half", "draw", "loss_half", "loss"];
 const quickAmountIncrements = [1, 2, 5, 10, 20];
@@ -353,6 +354,11 @@ export default function AppShell() {
     }
   }, [draft.amount, draft.comboMode, draft.comboSelections]);
   const draftExpectedReturn = draft.comboMode && draftComboResult ? draftComboResult.returnAmount : getExpectedReturn(parseDraftNumber(draft.amount), parseDraftNumber(draft.rate));
+  const draftBatchExpectedReturn = useMemo(() => {
+    if (!draft.batchMode) return 0;
+    const amount = parseDraftNumber(draft.amount);
+    return draft.batchSingles.reduce((sum, item) => sum + getExpectedReturn(amount, parseDraftNumber(item.rate)), 0);
+  }, [draft.amount, draft.batchMode, draft.batchSingles]);
   const recentAmounts = useMemo(() => {
     const uniqueAmounts: number[] = [];
     [...records].reverse().forEach((record) => {
@@ -786,7 +792,14 @@ export default function AppShell() {
       const editingRecord = editingRecordId ? records.find((record) => record.id === editingRecordId) : null;
       const url = editingRecordId ? `/api/records/${editingRecordId}` : "/api/records";
       let payload: Record<string, unknown> = { note: draft.note, playerId: selectedId, amount: draft.amount };
-      if (draft.comboMode && draft.comboSelections.length > 0) {
+      if (isCreating && draft.batchMode) {
+        const validRows = draft.batchSingles.filter((item) => item.rate.trim() || item.note.trim());
+        if (validRows.length === 0) {
+          setRecordError("Add at least one record.");
+          return;
+        }
+        payload.records = validRows;
+      } else if (draft.comboMode && draft.comboSelections.length > 0) {
         try {
           const legs = normalizeComboSelections(draft.comboSelections);
           const amount = parseDraftNumber(draft.amount);
@@ -803,19 +816,20 @@ export default function AppShell() {
       if (editingRecord?.status === "finalized") {
         payload.resultType = draft.resultType;
       }
-      const data = await readJson<{ record: RecordItem }>(
+      const data = await readJson<{ record?: RecordItem; records?: RecordItem[] }>(
         await fetch(url, {
           method: editingRecordId ? "PATCH" : "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         }),
       );
-      setRecords((current) => upsertRecord(current, data.record));
+      const savedRecords = data.records ?? (data.record ? [data.record] : []);
+      setRecords((current) => savedRecords.reduce((next, record) => upsertRecord(next, record), current));
       if (isCreating) {
         setPlayers((current) =>
           current.map((player) =>
             player.id === selectedId
-              ? { ...player, recordCount: player.recordCount + 1, pendingRecordCount: player.pendingRecordCount + 1 }
+              ? { ...player, recordCount: player.recordCount + savedRecords.length, pendingRecordCount: player.pendingRecordCount + savedRecords.length }
               : player,
           ),
         );
@@ -882,6 +896,8 @@ export default function AppShell() {
       rate: String(record.rate),
       note: record.note ?? "",
       comboMode: Boolean(record.comboLegs?.length && record.status === "pending"),
+      batchMode: false,
+      batchSingles: [{ rate: "", note: "" }],
       comboSelections: record.status === "pending" ? record.comboLegs?.map((leg) => ({ originalRate: leg.rate, note: leg.note ?? "" })) ?? [] : [],
       resultType: record.resultType ?? "win",
     });
@@ -1241,17 +1257,27 @@ export default function AppShell() {
                         </Field>
                         <div className="flex rounded-2xl border border-slate-200 bg-white p-1 dark:border-white/10 dark:bg-white/[0.04]">
                           <button
-                            aria-pressed={!draft.comboMode}
-                            className={`rounded-xl px-4 py-3 text-sm font-bold transition active:scale-95 ${!draft.comboMode ? "bg-ink text-white dark:bg-emerald-500 dark:text-ink" : "text-slate-500 dark:text-slate-300"}`}
-                            onClick={() => setDraft((current) => ({ ...current, comboMode: false, comboSelections: [] }))}
+                            aria-pressed={!draft.comboMode && !draft.batchMode}
+                            className={`rounded-xl px-4 py-3 text-sm font-bold transition active:scale-95 ${!draft.comboMode && !draft.batchMode ? "bg-ink text-white dark:bg-emerald-500 dark:text-ink" : "text-slate-500 dark:text-slate-300"}`}
+                            onClick={() => setDraft((current) => ({ ...current, batchMode: false, comboMode: false, comboSelections: [] }))}
                             type="button"
                           >
                             Single
                           </button>
+                          {!editingRecord ? (
+                            <button
+                              aria-pressed={draft.batchMode}
+                              className={`rounded-xl px-4 py-3 text-sm font-bold transition active:scale-95 ${draft.batchMode ? "bg-emerald-600 text-white" : "text-slate-500 dark:text-slate-300"}`}
+                              onClick={() => setDraft((current) => ({ ...current, batchMode: true, comboMode: false, comboSelections: [] }))}
+                              type="button"
+                            >
+                              Batch
+                            </button>
+                          ) : null}
                           <button
                             aria-pressed={draft.comboMode}
                             className={`rounded-xl px-4 py-3 text-sm font-bold transition active:scale-95 ${draft.comboMode ? "bg-emerald-600 text-white" : "text-slate-500 dark:text-slate-300"}`}
-                            onClick={() => setDraft((current) => ({ ...current, comboMode: true }))}
+                            onClick={() => setDraft((current) => ({ ...current, batchMode: false, comboMode: true }))}
                             type="button"
                           >
                             Combo
@@ -1291,7 +1317,63 @@ export default function AppShell() {
                         </>
                       ) : null}
                     </div>
-                    {draft.comboMode ? (
+                    {draft.batchMode ? (
+                      <div className="rounded-2xl border border-slate-100 bg-white p-3 dark:border-white/10 dark:bg-white/[0.04] sm:col-span-2">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Batch Singles</p>
+                          <button
+                            className="rounded-xl border border-dashed border-slate-300 px-3 py-2 text-xs font-bold text-slate-500 active:scale-95 dark:border-white/20 dark:text-slate-300"
+                            onClick={() => setDraft((current) => ({ ...current, batchSingles: [...current.batchSingles, { rate: "", note: "" }] }))}
+                            type="button"
+                          >
+                            + Add Record
+                          </button>
+                        </div>
+                        {draft.batchSingles.map((item, idx) => (
+                          <div className="mb-2 grid grid-cols-[auto_1fr_auto] items-center gap-2 rounded-2xl border border-slate-100 bg-slate-50 p-2 dark:border-white/10 dark:bg-[#121d19]" key={idx}>
+                            <span className="flex size-9 items-center justify-center rounded-full bg-white text-xs font-black text-slate-500 dark:bg-white/10 dark:text-slate-300">{idx + 1}</span>
+                            <div className="grid gap-2 sm:grid-cols-2">
+                              <input
+                                className="input"
+                                inputMode="decimal"
+                                min="0"
+                                onChange={(event) => {
+                                  const updated = [...draft.batchSingles];
+                                  updated[idx] = { ...updated[idx], rate: event.target.value };
+                                  setDraft((current) => ({ ...current, batchSingles: updated }));
+                                }}
+                                placeholder="Rate"
+                                step="any"
+                                type="number"
+                                value={item.rate}
+                              />
+                              <input
+                                className="input"
+                                onChange={(event) => {
+                                  const updated = [...draft.batchSingles];
+                                  updated[idx] = { ...updated[idx], note: event.target.value };
+                                  setDraft((current) => ({ ...current, batchSingles: updated }));
+                                }}
+                                placeholder="Note"
+                                value={item.note}
+                              />
+                            </div>
+                            <button
+                              aria-label={`Remove record ${idx + 1}`}
+                              className="flex size-10 items-center justify-center rounded-xl bg-rose-50 text-sm font-bold text-rose-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-rose-400/10 dark:text-rose-200"
+                              disabled={draft.batchSingles.length === 1}
+                              onClick={() => {
+                                const updated = draft.batchSingles.filter((_, i) => i !== idx);
+                                setDraft((current) => ({ ...current, batchSingles: updated }));
+                              }}
+                              type="button"
+                            >
+                              x
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : draft.comboMode ? (
                       <div className="rounded-2xl border border-slate-100 bg-white p-3 dark:border-white/10 dark:bg-white/[0.04] sm:col-span-2">
                         <div className="mb-2 flex items-center justify-between gap-3">
                           <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Combo Selections</p>
@@ -1393,7 +1475,7 @@ export default function AppShell() {
                         </select>
                       </Field>
                     ) : null}
-                    <div className="flex items-start gap-2 sm:col-span-2">
+                    <div className={`flex items-start gap-2 sm:col-span-2 ${draft.batchMode ? "hidden" : ""}`}>
                       <div className="flex-1">
                         <Field label="Note">
                           <textarea
@@ -1406,7 +1488,7 @@ export default function AppShell() {
                       </div>
                       <button
                         className="hidden"
-                        onClick={() => setDraft((current) => ({ ...current, comboMode: !current.comboMode, comboSelections: current.comboMode ? [] : current.comboSelections }))}
+                        onClick={() => setDraft((current) => ({ ...current, batchMode: false, comboMode: !current.comboMode, comboSelections: current.comboMode ? [] : current.comboSelections }))}
                         type="button"
                       >
                         {draft.comboMode ? "Combo ✓" : "Combo"}
@@ -1415,13 +1497,13 @@ export default function AppShell() {
                   </div>
                   <div className="mt-4 rounded-2xl border border-emerald-100 bg-white p-4 dark:border-emerald-400/20 dark:bg-white/[0.04]">
                     <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                      {draft.comboMode ? "Total Expected Return" : "Expected Return"}
+                      {draft.comboMode || draft.batchMode ? "Total Expected Return" : "Expected Return"}
                     </p>
-                    <p className="mt-1 text-xl font-bold text-ink dark:text-slate-50">{formatMoney(draftExpectedReturn)}</p>
+                    <p className="mt-1 text-xl font-bold text-ink dark:text-slate-50">{formatMoney(draft.batchMode ? draftBatchExpectedReturn : draftExpectedReturn)}</p>
                   </div>
                   <div className="mt-4 flex gap-2">
                     <button className="flex-1 rounded-2xl bg-emerald-600 py-3 font-bold text-white active:scale-95" disabled={busy} onClick={saveRecord} type="button">
-                      Save Record
+                      {draft.batchMode ? "Save Records" : "Save Record"}
                     </button>
                     <button className="rounded-2xl bg-slate-200 px-4 font-bold dark:bg-white/10" onClick={resetRecordForm} type="button">
                       Cancel
@@ -1880,17 +1962,27 @@ export default function AppShell() {
                         </Field>
                         <div className="flex rounded-2xl border border-slate-200 bg-white p-1 dark:border-white/10 dark:bg-white/[0.04]">
                           <button
-                            aria-pressed={!draft.comboMode}
-                            className={`rounded-xl px-4 py-3 text-sm font-bold transition active:scale-95 ${!draft.comboMode ? "bg-ink text-white dark:bg-emerald-500 dark:text-ink" : "text-slate-500 dark:text-slate-300"}`}
-                            onClick={() => setDraft((current) => ({ ...current, comboMode: false, comboSelections: [] }))}
+                            aria-pressed={!draft.comboMode && !draft.batchMode}
+                            className={`rounded-xl px-4 py-3 text-sm font-bold transition active:scale-95 ${!draft.comboMode && !draft.batchMode ? "bg-ink text-white dark:bg-emerald-500 dark:text-ink" : "text-slate-500 dark:text-slate-300"}`}
+                            onClick={() => setDraft((current) => ({ ...current, batchMode: false, comboMode: false, comboSelections: [] }))}
                             type="button"
                           >
                             Single
                           </button>
+                          {!editingRecord ? (
+                            <button
+                              aria-pressed={draft.batchMode}
+                              className={`rounded-xl px-4 py-3 text-sm font-bold transition active:scale-95 ${draft.batchMode ? "bg-emerald-600 text-white" : "text-slate-500 dark:text-slate-300"}`}
+                              onClick={() => setDraft((current) => ({ ...current, batchMode: true, comboMode: false, comboSelections: [] }))}
+                              type="button"
+                            >
+                              Batch
+                            </button>
+                          ) : null}
                           <button
                             aria-pressed={draft.comboMode}
                             className={`rounded-xl px-4 py-3 text-sm font-bold transition active:scale-95 ${draft.comboMode ? "bg-emerald-600 text-white" : "text-slate-500 dark:text-slate-300"}`}
-                            onClick={() => setDraft((current) => ({ ...current, comboMode: true }))}
+                            onClick={() => setDraft((current) => ({ ...current, batchMode: false, comboMode: true }))}
                             type="button"
                           >
                             Combo
@@ -1930,7 +2022,63 @@ export default function AppShell() {
                         </>
                       ) : null}
                     </div>
-                    {draft.comboMode ? (
+                    {draft.batchMode ? (
+                      <div className="rounded-2xl border border-slate-100 bg-white p-3 dark:border-white/10 dark:bg-white/[0.04] sm:col-span-2">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Batch Singles</p>
+                          <button
+                            className="rounded-xl border border-dashed border-slate-300 px-3 py-2 text-xs font-bold text-slate-500 active:scale-95 dark:border-white/20 dark:text-slate-300"
+                            onClick={() => setDraft((current) => ({ ...current, batchSingles: [...current.batchSingles, { rate: "", note: "" }] }))}
+                            type="button"
+                          >
+                            + Add Record
+                          </button>
+                        </div>
+                        {draft.batchSingles.map((item, idx) => (
+                          <div className="mb-2 grid grid-cols-[auto_1fr_auto] items-center gap-2 rounded-2xl border border-slate-100 bg-slate-50 p-2 dark:border-white/10 dark:bg-[#121d19]" key={idx}>
+                            <span className="flex size-9 items-center justify-center rounded-full bg-white text-xs font-black text-slate-500 dark:bg-white/10 dark:text-slate-300">{idx + 1}</span>
+                            <div className="grid gap-2">
+                              <input
+                                className="input"
+                                inputMode="decimal"
+                                min="0"
+                                onChange={(event) => {
+                                  const updated = [...draft.batchSingles];
+                                  updated[idx] = { ...updated[idx], rate: event.target.value };
+                                  setDraft((current) => ({ ...current, batchSingles: updated }));
+                                }}
+                                placeholder="Rate"
+                                step="any"
+                                type="number"
+                                value={item.rate}
+                              />
+                              <input
+                                className="input"
+                                onChange={(event) => {
+                                  const updated = [...draft.batchSingles];
+                                  updated[idx] = { ...updated[idx], note: event.target.value };
+                                  setDraft((current) => ({ ...current, batchSingles: updated }));
+                                }}
+                                placeholder="Note"
+                                value={item.note}
+                              />
+                            </div>
+                            <button
+                              aria-label={`Remove record ${idx + 1}`}
+                              className="flex size-10 items-center justify-center rounded-xl bg-rose-50 text-sm font-bold text-rose-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-rose-400/10 dark:text-rose-200"
+                              disabled={draft.batchSingles.length === 1}
+                              onClick={() => {
+                                const updated = draft.batchSingles.filter((_, i) => i !== idx);
+                                setDraft((current) => ({ ...current, batchSingles: updated }));
+                              }}
+                              type="button"
+                            >
+                              x
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : draft.comboMode ? (
                       <div className="rounded-2xl border border-slate-100 bg-white p-3 dark:border-white/10 dark:bg-white/[0.04] sm:col-span-2">
                         <div className="mb-2 flex items-center justify-between gap-3">
                           <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Combo Selections</p>
@@ -2032,7 +2180,7 @@ export default function AppShell() {
                         </select>
                       </Field>
                     ) : null}
-                    <div className="flex items-start gap-2 sm:col-span-2">
+                    <div className={`flex items-start gap-2 sm:col-span-2 ${draft.batchMode ? "hidden" : ""}`}>
                       <div className="flex-1">
                         <Field label="Note">
                           <textarea
@@ -2045,7 +2193,7 @@ export default function AppShell() {
                       </div>
                       <button
                         className="hidden"
-                        onClick={() => setDraft((current) => ({ ...current, comboMode: !current.comboMode, comboSelections: current.comboMode ? [] : current.comboSelections }))}
+                        onClick={() => setDraft((current) => ({ ...current, batchMode: false, comboMode: !current.comboMode, comboSelections: current.comboMode ? [] : current.comboSelections }))}
                         type="button"
                       >
                         {draft.comboMode ? "Combo ✓" : "Combo"}
@@ -2054,13 +2202,13 @@ export default function AppShell() {
                   </div>
                   <div className="mt-4 rounded-2xl border border-emerald-100 bg-white p-4 dark:border-emerald-400/20 dark:bg-white/[0.04]">
                     <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                      {draft.comboMode ? "Total Expected Return" : "Expected Return"}
+                      {draft.comboMode || draft.batchMode ? "Total Expected Return" : "Expected Return"}
                     </p>
-                    <p className="mt-1 text-xl font-bold text-ink dark:text-slate-50">{formatMoney(draftExpectedReturn)}</p>
+                    <p className="mt-1 text-xl font-bold text-ink dark:text-slate-50">{formatMoney(draft.batchMode ? draftBatchExpectedReturn : draftExpectedReturn)}</p>
                   </div>
                   <div className="mt-4 flex gap-2">
                     <button className="flex-1 rounded-2xl bg-emerald-600 py-3 font-bold text-white active:scale-95" disabled={busy} onClick={saveRecord} type="button">
-                      Save Record
+                      {draft.batchMode ? "Save Records" : "Save Record"}
                     </button>
                     <button className="rounded-2xl bg-slate-200 px-4 font-bold dark:bg-white/10" onClick={resetRecordForm} type="button">
                       Cancel

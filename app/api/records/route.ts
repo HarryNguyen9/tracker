@@ -4,7 +4,7 @@ import { getSql, isDatabaseConfigError, type RecordRow } from "../../lib/db";
 import { jsonError } from "../../lib/http";
 import { mapRecord, withBalance } from "../../lib/mappers";
 import { ensureTrackerSchema, ensureTrackerSchemaIfNeeded } from "../../lib/schema";
-import { cleanOptionalText, parseGreaterThanZeroNumber, parseNonNegativeNumber } from "../../lib/validation";
+import { cleanOptionalText, parseGreaterThanZeroNumber, parseNonNegativeNumber, prepareBatchSingleRecords } from "../../lib/validation";
 import { normalizeComboSelections, summarizeComboLegs } from "../../lib/combo";
 import type { ComboSelection } from "../../lib/types";
 
@@ -79,12 +79,34 @@ export async function POST(request: Request) {
       throw new Error("Player is required.");
     }
 
+    const sql = getSql();
+
+    if (Array.isArray(body.records)) {
+      const batchRecords = prepareBatchSingleRecords({ amount: body.amount, records: body.records });
+      let records: RecordRow[];
+      try {
+        records = [];
+        for (const item of batchRecords) {
+          records = [...records, await insertPendingRecord(sql, playerId, item.amount, item.rate, item.note, null)];
+        }
+      } catch (error) {
+        if (!(await ensureTrackerSchemaIfNeeded(error, sql))) {
+          throw error;
+        }
+        records = [];
+        for (const item of batchRecords) {
+          records = [...records, await insertPendingRecord(sql, playerId, item.amount, item.rate, item.note, null)];
+        }
+      }
+
+      return NextResponse.json({ records: records.map(mapRecord) }, { status: 201 });
+    }
+
     const note = cleanOptionalText(body.note);
     const comboLegs = Array.isArray(body.comboLegs) ? normalizeComboSelections(body.comboLegs as ComboSelection[]) : null;
     const amount = parseGreaterThanZeroNumber(body.amount, "Amount");
     const comboSummary = comboLegs ? summarizeComboLegs(amount, comboLegs) : null;
     const rate = comboSummary ? comboSummary.rate : parseNonNegativeNumber(body.rate, "Rate");
-    const sql = getSql();
     let record: RecordRow;
     try {
       record = await insertPendingRecord(sql, playerId, amount, rate, note, comboLegs);
@@ -94,7 +116,6 @@ export async function POST(request: Request) {
       }
       record = await insertPendingRecord(sql, playerId, amount, rate, note, comboLegs);
     }
-
     return NextResponse.json({ record: mapRecord(record) }, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";

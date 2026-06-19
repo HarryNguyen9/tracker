@@ -65,6 +65,8 @@ export type RecordDraft = {
   rate: string;
   note: string;
   comboMode: boolean;
+  batchMode: boolean;
+  batchSingles: { rate: string; note: string }[];
   comboSelections: ComboSelection[];
 };
 
