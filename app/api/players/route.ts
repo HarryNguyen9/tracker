@@ -5,7 +5,7 @@ import { jsonError } from "../../lib/http";
 import { mapPlayer, toNumber } from "../../lib/mappers";
 import { ensureTrackerSchema, ensureTrackerSchemaIfNeeded } from "../../lib/schema";
 import type { PlayerSummary } from "../../lib/types";
-import { cleanText } from "../../lib/validation";
+import { cleanText, roundMoney } from "../../lib/validation";
 
 type Sql = ReturnType<typeof getSql>;
 type SummaryValue = string | number;
@@ -30,9 +30,9 @@ async function loadPlayerSummaries(sql: Sql): Promise<PlayerSummary[]> {
       p.display_order,
       p.created_at,
       p.updated_at,
-      coalesce(sum(r.amount) filter (where r.deleted_at is null and r.status = 'finalized'), 0) as total_amount,
-      coalesce(sum(r.return_amount) filter (where r.deleted_at is null and r.status = 'finalized'), 0) as total_return,
-      coalesce(sum(r.profit) filter (where r.deleted_at is null and r.status = 'finalized'), 0) as total_profit,
+      coalesce(round(sum(r.amount) filter (where r.deleted_at is null and r.status = 'finalized'), 2), 0) as total_amount,
+      coalesce(round(sum(r.return_amount) filter (where r.deleted_at is null and r.status = 'finalized'), 2), 0) as total_return,
+      coalesce(round(sum(r.profit) filter (where r.deleted_at is null and r.status = 'finalized'), 2), 0) as total_profit,
       count(r.id) filter (where r.deleted_at is null) as record_count,
       count(r.id) filter (where r.deleted_at is null and r.status = 'finalized') as finalized_record_count,
       count(r.id) filter (where r.deleted_at is null and r.status = 'pending') as pending_record_count,
@@ -48,12 +48,12 @@ async function loadPlayerSummaries(sql: Sql): Promise<PlayerSummary[]> {
 
   return rows.map((row) => {
     const player = mapPlayer(row);
-    const totalProfit = toNumber(row.total_profit);
+    const totalProfit = roundMoney(toNumber(row.total_profit));
 
     return {
       ...player,
-      totalAmount: toNumber(row.total_amount),
-      totalReturn: toNumber(row.total_return),
+      totalAmount: roundMoney(toNumber(row.total_amount)),
+      totalReturn: roundMoney(toNumber(row.total_return)),
       totalProfit,
       balance: totalProfit,
       recordCount: toNumber(row.record_count),

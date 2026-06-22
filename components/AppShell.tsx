@@ -45,6 +45,10 @@ function profitTextClass(value: number) {
   return "text-ink dark:text-slate-50";
 }
 
+function roundMoneyValue(value: number) {
+  return Math.round((value + 1e-9) * 100) / 100;
+}
+
 function parseDraftNumber(value: string) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -229,7 +233,7 @@ function applyClientBalance(items: RecordWithBalance[]) {
     if (item.status !== "finalized") {
       return { ...item, balance: null };
     }
-    running += item.profit;
+    running = roundMoneyValue(running + item.profit);
     return { ...item, balance: running };
   });
 }
@@ -245,11 +249,11 @@ function upsertRecord(items: RecordWithBalance[], record: RecordItem) {
 }
 
 function applyConfirmedRecordSummary(player: PlayerSummary, record: RecordItem) {
-  const totalProfit = player.totalProfit + record.profit;
+  const totalProfit = roundMoneyValue(player.totalProfit + record.profit);
   return {
     ...player,
-    totalAmount: player.totalAmount + record.amount,
-    totalReturn: player.totalReturn + record.returnAmount,
+    totalAmount: roundMoneyValue(player.totalAmount + record.amount),
+    totalReturn: roundMoneyValue(player.totalReturn + record.returnAmount),
     totalProfit,
     balance: totalProfit,
     finalizedRecordCount: player.finalizedRecordCount + 1,
@@ -357,7 +361,7 @@ export default function AppShell() {
   const draftBatchExpectedReturn = useMemo(() => {
     if (!draft.batchMode) return 0;
     const amount = parseDraftNumber(draft.amount);
-    return draft.batchSingles.reduce((sum, item) => sum + getExpectedReturn(amount, parseDraftNumber(item.rate)), 0);
+    return roundMoneyValue(draft.batchSingles.reduce((sum, item) => sum + getExpectedReturn(amount, parseDraftNumber(item.rate)), 0));
   }, [draft.amount, draft.batchMode, draft.batchSingles]);
   const recentAmounts = useMemo(() => {
     const uniqueAmounts: number[] = [];
@@ -3007,7 +3011,7 @@ function FinalizedRecordsDialog({
   setSelectedComboResult: (recordId: string, legIndex: number, resultType: ComboResultChoice) => void;
   setSelectedResultType: (resultType: ResultType) => void;
 }) {
-  const totalProfit = records.reduce((sum, r) => sum + r.profit, 0);
+  const totalProfit = roundMoneyValue(records.reduce((sum, r) => sum + r.profit, 0));
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [editAmounts, setEditAmounts] = useState<Record<string, string>>({});
 

@@ -1,5 +1,6 @@
 import type { Player, RecordItem, RecordWithBalance, WorldCupMatch } from "./types";
 import type { PlayerRow, RecordRow, WorldCupMatchRow } from "./db";
+import { roundMoney } from "./validation";
 
 export function toNumber(value: string | number) {
   return typeof value === "number" ? value : Number(value);
@@ -35,8 +36,8 @@ export function mapRecord(row: RecordRow): RecordItem {
     rate: toNumber(row.rate),
     status: row.status,
     resultType: row.result_type,
-    returnAmount: toNumber(row.return_amount),
-    profit: toNumber(row.profit),
+    returnAmount: roundMoney(toNumber(row.return_amount)),
+    profit: roundMoney(toNumber(row.profit)),
     note: row.note,
     deletedAt: row.deleted_at ? toIsoText(row.deleted_at) : null,
     deleteReason: row.delete_reason,
@@ -52,7 +53,7 @@ export function withBalance(items: RecordItem[]): RecordWithBalance[] {
     if (item.status !== "finalized") {
       return { ...item, balance: null };
     }
-    running += item.profit;
+    running = roundMoney(running + item.profit);
     return { ...item, balance: running };
   });
 }
