@@ -29,15 +29,20 @@ export function mapPlayer(row: PlayerRow): Player {
 }
 
 export function mapRecord(row: RecordRow): RecordItem {
+  const amount = roundMoney(toNumber(row.amount));
+  const returnAmount = roundMoney(toNumber(row.return_amount));
+  const storedProfit = roundMoney(toNumber(row.profit));
+  const profit = row.status === "finalized" ? roundMoney(returnAmount - amount) : storedProfit;
+
   return {
     id: row.id,
     playerId: row.player_id,
-    amount: toNumber(row.amount),
+    amount,
     rate: toNumber(row.rate),
     status: row.status,
     resultType: row.result_type,
-    returnAmount: roundMoney(toNumber(row.return_amount)),
-    profit: roundMoney(toNumber(row.profit)),
+    returnAmount,
+    profit,
     note: row.note,
     deletedAt: row.deleted_at ? toIsoText(row.deleted_at) : null,
     deleteReason: row.delete_reason,

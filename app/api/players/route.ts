@@ -32,7 +32,11 @@ async function loadPlayerSummaries(sql: Sql): Promise<PlayerSummary[]> {
       p.updated_at,
       coalesce(round(sum(round(r.amount::numeric, 2)) filter (where r.deleted_at is null and r.status = 'finalized'), 2), 0) as total_amount,
       coalesce(round(sum(round(r.return_amount::numeric, 2)) filter (where r.deleted_at is null and r.status = 'finalized'), 2), 0) as total_return,
-      coalesce(round(sum(round(r.profit::numeric, 2)) filter (where r.deleted_at is null and r.status = 'finalized'), 2), 0) as total_profit,
+      round(
+        coalesce(round(sum(round(r.return_amount::numeric, 2)) filter (where r.deleted_at is null and r.status = 'finalized'), 2), 0)
+        - coalesce(round(sum(round(r.amount::numeric, 2)) filter (where r.deleted_at is null and r.status = 'finalized'), 2), 0),
+        2
+      ) as total_profit,
       count(r.id) filter (where r.deleted_at is null) as record_count,
       count(r.id) filter (where r.deleted_at is null and r.status = 'finalized') as finalized_record_count,
       count(r.id) filter (where r.deleted_at is null and r.status = 'pending') as pending_record_count,
