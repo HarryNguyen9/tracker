@@ -72,7 +72,7 @@ test("creation preview multiplies all rates", () => {
 test("combo rate rounds instead of flooring decimal precision", () => {
   const result = calculateComboBet(5, [1.63, 1.7, 1.53, 1.85]);
   assertApprox(result.finalRate, 7.8433);
-  assertApprox(result.returnAmount, 39.2165);
+  assertApprox(result.returnAmount, 39.22);
 });
 
 test("pending summary uses current rate for unresolved legs", () => {

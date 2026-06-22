@@ -2,6 +2,7 @@
  * Combo calculation helpers for records with multiple independent legs.
  */
 import type { ComboLeg, ComboSelection, ComboSelectionOutcome, ResultType } from "./types";
+import { roundMoney } from "./validation";
 
 export type ComboBetResult = {
   finalRate: number;
@@ -32,8 +33,8 @@ export function calculateComboBet(amount: number, rates: number[]): ComboBetResu
     finalRate = roundRate(finalRate * rate);
   }
 
-  const returnAmount = finalRate * amount;
-  const netProfit = returnAmount - amount;
+  const returnAmount = roundMoney(finalRate * amount);
+  const netProfit = roundMoney(returnAmount - amount);
 
   return { finalRate, stake: amount, returnAmount, netProfit };
 }
@@ -83,8 +84,8 @@ function outcomeRate(leg: ComboLeg, resultType: ResultType) {
 
 export function summarizeComboLegs(amount: number, legs: ComboLeg[]): ComboSummary {
   const rate = legs.reduce((current, leg) => roundRate(current * (leg.currentRate ?? leg.rate)), 1);
-  const returnAmount = amount * rate;
-  const profit = legs.every((leg) => leg.outcome !== null) ? returnAmount - amount : 0;
+  const returnAmount = roundMoney(amount * rate);
+  const profit = legs.every((leg) => leg.outcome !== null) ? roundMoney(returnAmount - amount) : 0;
 
   return { amount, rate, returnAmount, profit };
 }
@@ -99,7 +100,7 @@ export function recalculateComboRecord(amount: number, legs: ComboLeg[]) {
     return {
       ...summary,
       returnAmount: 0,
-      profit: -amount,
+      profit: -roundMoney(amount),
       finalized: true,
       resultType: "loss" as ResultType,
     };
@@ -142,7 +143,7 @@ export function applyComboOutcome(amount: number, legs: ComboLeg[], legIndex: nu
     }
 
     const currentRate = outcomeRate(leg, resultType);
-    const returnAmount = amount * currentRate;
+    const returnAmount = roundMoney(amount * currentRate);
     return {
       ...leg,
       outcome: resultTypeToComboOutcome(resultType),

@@ -128,6 +128,12 @@ async function applyTrackerSchema(sql: Sql) {
     add constraint records_result_type_check
     check (result_type is null or result_type in ('win', 'loss', 'draw', 'win_half', 'loss_half'))
   `;
+  await sql`
+    update records
+    set return_amount = round(return_amount::numeric, 2),
+        profit = round(return_amount::numeric, 2) - round(amount::numeric, 2)
+    where status = 'finalized'
+  `;
   await sql`create index if not exists players_display_order_idx on players (display_order, created_at)`;
   await sql`create index if not exists records_player_id_created_at_idx on records (player_id, created_at)`;
   await sql`create index if not exists records_player_id_deleted_at_idx on records (player_id, deleted_at)`;

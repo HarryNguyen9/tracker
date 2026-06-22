@@ -867,6 +867,21 @@ export default function AppShell() {
     });
   }
 
+  async function saveFinalizedRecord(recordId: string, amount: string, resultType?: ResultType) {
+    await runEdit(async () => {
+      const data = await readJson<{ record: RecordItem }>(
+        await fetch(`/api/records/${recordId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ amount, resultType }),
+        }),
+      );
+      setRecords((current) => upsertRecord(current, data.record));
+      setConfirmingRecordId(null);
+      refreshSelectedData(selectedId);
+    });
+  }
+
   function startEditResult(record: RecordWithBalance) {
     setSelectedResultType(record.resultType ?? "win");
     if (!editMode) {
@@ -1821,7 +1836,6 @@ export default function AppShell() {
           editMode={editMode}
           onCancel={() => setFinalizedOpen(false)}
           onConfirmLeg={(recordId, legIndex, resultType) => confirmRecord(recordId, resultType, legIndex)}
-          onConfirmResult={(recordId, resultType) => confirmRecord(recordId, resultType)}
           onOpenEditAccess={(recordId) => {
             setPendingConfirmRecordId(recordId);
             openPinFor("confirm");
@@ -1831,6 +1845,7 @@ export default function AppShell() {
             removeRecord(record);
           }}
           onSetConfirmingRecordId={setConfirmingRecordId}
+          onSaveFinalizedRecord={saveFinalizedRecord}
           records={finalizedRecords}
           selectedComboResult={selectedComboResult}
           selectedResultType={selectedResultType}
@@ -2967,9 +2982,9 @@ function FinalizedRecordsDialog({
   editMode,
   onCancel,
   onConfirmLeg,
-  onConfirmResult,
   onOpenEditAccess,
   onRemoveRecord,
+  onSaveFinalizedRecord,
   onSetConfirmingRecordId,
   records,
   selectedComboResult,
@@ -2982,9 +2997,9 @@ function FinalizedRecordsDialog({
   editMode: boolean;
   onCancel: () => void;
   onConfirmLeg: (recordId: string, legIndex: number, resultType: ResultType) => void;
-  onConfirmResult: (recordId: string, resultType: ResultType) => void;
   onOpenEditAccess: (recordId: string) => void;
   onRemoveRecord: (record: RecordWithBalance) => void;
+  onSaveFinalizedRecord: (recordId: string, amount: string, resultType?: ResultType) => void;
   onSetConfirmingRecordId: (recordId: string | null) => void;
   records: RecordWithBalance[];
   selectedComboResult: (record: RecordWithBalance, legIndex: number) => ComboResultChoice;
@@ -2994,6 +3009,7 @@ function FinalizedRecordsDialog({
 }) {
   const totalProfit = records.reduce((sum, r) => sum + r.profit, 0);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [editAmounts, setEditAmounts] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
@@ -3062,6 +3078,7 @@ function FinalizedRecordsDialog({
                         className="flex-1 rounded-2xl bg-slate-100 py-2 text-sm font-bold dark:bg-white/10"
                         onClick={() => {
                           setSelectedResultType(record.resultType ?? "win");
+                          setEditAmounts((current) => ({ ...current, [record.id]: String(record.amount) }));
                           if (!editMode) {
                             onOpenEditAccess(record.id);
                             return;
@@ -3099,29 +3116,42 @@ function FinalizedRecordsDialog({
                         setSelectedComboResult={(legIndex, resultType) => setSelectedComboResult(record.id, legIndex, resultType)}
                       />
                     ) : null}
-                    {!record.comboLegs?.length && confirmingRecordId === record.id ? (
+                    {confirmingRecordId === record.id ? (
                       <div className="mt-4 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
-                        <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Edit Result</p>
-                        <div className="flex flex-col gap-3 sm:grid sm:grid-cols-[1fr_auto_auto]">
-                          <select
+                        <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Edit Record</p>
+                        <div className={`grid gap-3 ${record.comboLegs?.length ? "sm:grid-cols-[1fr_auto_auto]" : "sm:grid-cols-[1fr_1fr_auto_auto]"}`}>
+                          <input
                             className="input min-h-11"
                             disabled={busy}
-                            onChange={(event) => setSelectedResultType(event.target.value as ResultType)}
-                            value={selectedResultType}
-                          >
-                            {resultOptions.map((resultType) => (
-                              <option key={resultType} value={resultType}>
-                                {resultLabels[resultType]}
-                              </option>
-                            ))}
-                          </select>
+                            inputMode="decimal"
+                            min="0"
+                            onChange={(event) => setEditAmounts((current) => ({ ...current, [record.id]: event.target.value }))}
+                            placeholder="Amount"
+                            step="any"
+                            type="number"
+                            value={editAmounts[record.id] ?? String(record.amount)}
+                          />
+                          {!record.comboLegs?.length ? (
+                            <select
+                              className="input min-h-11"
+                              disabled={busy}
+                              onChange={(event) => setSelectedResultType(event.target.value as ResultType)}
+                              value={selectedResultType}
+                            >
+                              {resultOptions.map((resultType) => (
+                                <option key={resultType} value={resultType}>
+                                  {resultLabels[resultType]}
+                                </option>
+                              ))}
+                            </select>
+                          ) : null}
                           <button
                             className="rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
                             disabled={busy}
-                            onClick={() => onConfirmResult(record.id, selectedResultType)}
+                            onClick={() => onSaveFinalizedRecord(record.id, editAmounts[record.id] ?? String(record.amount), record.comboLegs?.length ? undefined : selectedResultType)}
                             type="button"
                           >
-                            Save Result
+                            Save Changes
                           </button>
                           <button className="rounded-2xl bg-slate-200 px-4 py-3 font-bold dark:bg-white/10" onClick={() => onSetConfirmingRecordId(null)} type="button">
                             Cancel

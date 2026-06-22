@@ -2,6 +2,10 @@ import type { ResultType } from "./types";
 
 const resultTypes = ["win", "loss", "draw", "win_half", "loss_half"] as const;
 
+export function roundMoney(value: number) {
+  return Math.round((value + 1e-9) * 100) / 100;
+}
+
 export function parseNonNegativeNumber(value: unknown, label: string) {
   const parsed = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) {
@@ -48,23 +52,25 @@ export function parseResultType(value: unknown): ResultType {
 }
 
 export function calculateRecordValues(amount: number, rate: number, resultType: ResultType) {
+  const roundedAmount = roundMoney(amount);
   if (resultType === "loss") {
-    return { returnAmount: 0, profit: -amount };
+    return { returnAmount: 0, profit: -roundedAmount };
   }
   if (resultType === "loss_half") {
-    const returnAmount = amount / 2;
-    return { returnAmount, profit: -amount / 2 };
+    const returnAmount = roundMoney(roundedAmount / 2);
+    return { returnAmount, profit: roundMoney(returnAmount - roundedAmount) };
   }
   if (resultType === "draw") {
-    return { returnAmount: amount, profit: 0 };
+    return { returnAmount: roundedAmount, profit: 0 };
   }
   if (resultType === "win_half") {
-    const fullProfit = amount * rate - amount;
-    const returnAmount = amount + fullProfit / 2;
-    return { returnAmount, profit: fullProfit / 2 };
+    const fullReturn = roundMoney(roundedAmount * rate);
+    const fullProfit = roundMoney(fullReturn - roundedAmount);
+    const returnAmount = roundMoney(roundedAmount + fullProfit / 2);
+    return { returnAmount, profit: roundMoney(returnAmount - roundedAmount) };
   }
-  const returnAmount = amount * rate;
-  return { returnAmount, profit: returnAmount - amount };
+  const returnAmount = roundMoney(roundedAmount * rate);
+  return { returnAmount, profit: roundMoney(returnAmount - roundedAmount) };
 }
 
 export function prepareFinalizedRecordUpdate({
@@ -80,15 +86,16 @@ export function prepareFinalizedRecordUpdate({
   existingRate: number;
   existingResultType: ResultType | null;
 }) {
+  const amount = body.amount === undefined ? existingAmount : parseGreaterThanZeroNumber(body.amount, "Amount");
   const resultType = body.resultType === undefined ? existingResultType : parseResultType(body.resultType);
 
   if (!resultType) {
     throw new Error("Result is required.");
   }
 
-  const { returnAmount, profit } = calculateRecordValues(existingAmount, existingRate, resultType);
+  const { returnAmount, profit } = calculateRecordValues(amount, existingRate, resultType);
   return {
-    amount: existingAmount,
+    amount: roundMoney(amount),
     rate: existingRate,
     resultType,
     returnAmount,

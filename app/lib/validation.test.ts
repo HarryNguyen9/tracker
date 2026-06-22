@@ -1,4 +1,4 @@
-import { prepareBatchSingleRecords, prepareFinalizedRecordUpdate } from "./validation";
+import { calculateRecordValues, prepareBatchSingleRecords, prepareFinalizedRecordUpdate } from "./validation";
 
 function test(name: string, fn: () => void) {
   try {
@@ -16,7 +16,7 @@ function assert(condition: boolean, message: string) {
 
 console.log("validation tests");
 
-test("finalized record update only changes result values", () => {
+test("finalized record update keeps rate and note while changing amount and result", () => {
   const update = prepareFinalizedRecordUpdate({
     existingAmount: 10,
     existingRate: 2,
@@ -30,12 +30,36 @@ test("finalized record update only changes result values", () => {
     },
   });
 
-  assert(update.amount === 10, "amount should stay unchanged");
+  assert(update.amount === 999, "amount should update");
   assert(update.rate === 2, "rate should stay unchanged");
   assert(update.note === "Original note", "note should stay unchanged");
   assert(update.resultType === "win", "result should update");
-  assert(update.returnAmount === 20, "return should use stored amount and rate");
-  assert(update.profit === 10, "profit should use stored amount and rate");
+  assert(update.returnAmount === 1998, "return should use updated amount and stored rate");
+  assert(update.profit === 999, "profit should use updated amount and stored rate");
+});
+
+test("record values round money fields to cents before profit", () => {
+  const result = calculateRecordValues(35, 2.235, "win");
+  assert(result.returnAmount === 78.23, "return should round to cents");
+  assert(result.profit === 43.23, "profit should match rounded return minus amount");
+});
+
+test("finalized record update can change amount and recalculate values", () => {
+  const update = prepareFinalizedRecordUpdate({
+    existingAmount: 35,
+    existingRate: 2.235,
+    existingNote: "Original note",
+    existingResultType: "win",
+    body: {
+      amount: "40",
+      resultType: "win",
+    },
+  });
+
+  assert(update.amount === 40, "amount should update");
+  assert(update.rate === 2.235, "rate should stay unchanged");
+  assert(update.returnAmount === 89.4, "return should use updated amount");
+  assert(update.profit === 49.4, "profit should use updated amount");
 });
 
 test("batch single records reuse one amount with separate rates and notes", () => {
