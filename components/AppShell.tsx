@@ -2860,13 +2860,21 @@ function KnockoutView({ matches }: { matches: WorldCupMatch[] }) {
   }, {});
   const slotsByNumber = knockoutSlots.reduce<Record<number, KnockoutSlot>>((items, slot) => ({ ...items, [slot.matchNumber]: slot }), {});
   const columnGroups = [
-    { title: "Round of 32", slots: [73, 74, 75, 76, 77, 78, 79, 80] },
-    { title: "Round of 16", slots: [89, 90, 91, 92] },
-    { title: "Quarterfinals", slots: [97, 99] },
-    { title: "Semifinals / Final", slots: [101, 104, 103, 102] },
-    { title: "Quarterfinals", slots: [98, 100] },
-    { title: "Round of 16", slots: [93, 94, 95, 96] },
-    { title: "Round of 32", slots: [81, 82, 83, 84, 85, 86, 87, 88] },
+    { title: "Round of 32", items: [73, 74, 75, 76, 77, 78, 79, 80].map((matchNumber, index) => ({ matchNumber, rowStart: index * 2 + 1, rowSpan: 2 })) },
+    { title: "Round of 16", items: [89, 90, 91, 92].map((matchNumber, index) => ({ matchNumber, rowStart: index * 4 + 1, rowSpan: 4 })) },
+    { title: "Quarterfinals", items: [97, 99].map((matchNumber, index) => ({ matchNumber, rowStart: index * 8 + 1, rowSpan: 8 })) },
+    {
+      title: "Semifinals / Final",
+      items: [
+        { matchNumber: 101, rowStart: 3, rowSpan: 3 },
+        { matchNumber: 104, rowStart: 7, rowSpan: 3 },
+        { matchNumber: 103, rowStart: 10, rowSpan: 3 },
+        { matchNumber: 102, rowStart: 14, rowSpan: 3 },
+      ],
+    },
+    { title: "Quarterfinals", items: [98, 100].map((matchNumber, index) => ({ matchNumber, rowStart: index * 8 + 1, rowSpan: 8 })) },
+    { title: "Round of 16", items: [93, 94, 95, 96].map((matchNumber, index) => ({ matchNumber, rowStart: index * 4 + 1, rowSpan: 4 })) },
+    { title: "Round of 32", items: [81, 82, 83, 84, 85, 86, 87, 88].map((matchNumber, index) => ({ matchNumber, rowStart: index * 2 + 1, rowSpan: 2 })) },
   ];
 
   return (
@@ -2885,15 +2893,21 @@ function KnockoutView({ matches }: { matches: WorldCupMatch[] }) {
         </div>
       </div>
       <div className="overflow-x-auto pb-2">
-        <div className="grid min-w-[1320px] grid-cols-[1.15fr_1fr_0.95fr_1.05fr_0.95fr_1fr_1.15fr] gap-3">
+        <div className="grid min-w-[1440px] grid-cols-[1.15fr_1fr_0.95fr_1.05fr_0.95fr_1fr_1.15fr] gap-4">
           {columnGroups.map((group) => (
-            <div className="flex flex-col gap-3" key={`${group.title}-${group.slots.join("-")}`}>
+            <div className="flex flex-col gap-3" key={`${group.title}-${group.items.map((item) => item.matchNumber).join("-")}`}>
               <div className="sticky left-0 rounded-xl bg-ink px-3 py-2 text-center text-xs font-black uppercase tracking-wide text-white dark:bg-emerald-500/15 dark:text-emerald-100">
                 {group.title}
               </div>
-              <div className={`grid gap-3 ${group.slots.length <= 2 ? "content-center" : ""}`}>
-                {group.slots.map((matchNumber) => (
-                  <KnockoutSlotCard key={matchNumber} match={matchesByNumber[matchNumber]} slot={slotsByNumber[matchNumber]} />
+              <div className="grid gap-y-2" style={{ gridTemplateRows: "repeat(16, minmax(5.75rem, 5.75rem))" }}>
+                {group.items.map((item) => (
+                  <div
+                    className="flex items-center"
+                    key={item.matchNumber}
+                    style={{ gridRow: `${item.rowStart} / span ${item.rowSpan}` }}
+                  >
+                    <KnockoutSlotCard match={matchesByNumber[item.matchNumber]} slot={slotsByNumber[item.matchNumber]} />
+                  </div>
                 ))}
               </div>
             </div>
@@ -2917,8 +2931,8 @@ function KnockoutSlotCard({ match, slot }: { match?: WorldCupMatch; slot: Knocko
         : "border-slate-200 bg-white dark:border-white/10 dark:bg-[#121d19]";
 
   return (
-    <article className={`rounded-2xl border p-3 shadow-sm ${toneClass}`}>
-      <div className="mb-3 flex items-start justify-between gap-2">
+    <article className={`w-full rounded-2xl border p-3 shadow-sm ${toneClass}`}>
+      <div className="mb-2 flex items-start justify-between gap-2">
         <div>
           <p className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">M{slot.matchNumber}</p>
           <p className="text-[0.68rem] font-bold text-slate-400 dark:text-slate-500">{slot.round}</p>
@@ -2930,7 +2944,7 @@ function KnockoutSlotCard({ match, slot }: { match?: WorldCupMatch; slot: Knocko
         <div className="mx-auto rounded-xl bg-slate-100 px-3 py-1 text-sm font-black text-ink dark:bg-white/10 dark:text-white">{score}</div>
         <KnockoutTeam name={awayName} />
       </div>
-      {isBestThirdSlot ? <p className="mt-3 rounded-xl bg-emerald-50 px-2 py-1 text-center text-[0.68rem] font-bold text-emerald-800 dark:bg-emerald-400/10 dark:text-emerald-200">Depends on best third-place qualifiers</p> : null}
+      {isBestThirdSlot ? <p className="mt-2 text-center text-[0.68rem] font-bold text-emerald-700 dark:text-emerald-300">Best third-place path</p> : null}
       {match?.winner ? <p className="mt-3 rounded-xl bg-emerald-100 px-2 py-1 text-center text-xs font-bold text-emerald-900 dark:bg-emerald-400/15 dark:text-emerald-100">Winner: {match.winner}</p> : null}
     </article>
   );
