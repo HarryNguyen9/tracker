@@ -2757,8 +2757,8 @@ function ScheduleDialog({
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end bg-ink/60 p-4 backdrop-blur-sm sm:items-center sm:justify-center">
-      <section className="max-h-[88vh] w-full overflow-hidden rounded-[1.5rem] border border-white/80 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-[#121d19] sm:max-w-[92rem]">
+    <div className="fixed inset-0 z-50 flex items-end bg-ink/60 p-3 backdrop-blur-sm sm:items-center sm:justify-center">
+      <section className="max-h-[94vh] w-full overflow-hidden rounded-[1.5rem] border border-white/80 bg-white p-4 shadow-soft dark:border-white/10 dark:bg-[#121d19] sm:max-h-[96vh] sm:max-w-[94rem]">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="text-sm font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">World Cup 2026</p>
@@ -2799,7 +2799,7 @@ function ScheduleDialog({
           ))}
         </div>
 
-        <div className="mt-5 flex max-h-[64vh] flex-col gap-5 overflow-y-auto pr-1">
+        <div className="mt-4 flex max-h-[74vh] flex-col gap-5 overflow-y-auto pr-1 sm:max-h-[78vh]">
           {activeTab === "schedule" ? Object.entries(groupedMatches).map(([day, dayMatches]) => (
             <section key={day}>
               <h3 className="sticky top-0 z-10 rounded-2xl border border-slate-100 bg-white/95 px-3 py-2 text-sm font-black text-slate-700 backdrop-blur dark:border-white/10 dark:bg-[#121d19]/95 dark:text-slate-200">
@@ -2879,34 +2879,23 @@ function KnockoutView({ matches }: { matches: WorldCupMatch[] }) {
 
   return (
     <section className="rounded-3xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3 rounded-2xl bg-white p-4 dark:bg-[#121d19]">
-        <div>
-          <h3 className="text-lg font-black">World Cup 2026 Knockout Bracket</h3>
-          <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-500 dark:text-slate-400">
-            Slots show qualification paths until teams are confirmed. Best third-place pairings are finalized after the group stage.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2 text-xs font-bold">
-          <span className="rounded-full bg-blue-100 px-3 py-1 text-blue-800 dark:bg-blue-400/15 dark:text-blue-200">Winner / Runner-up</span>
-          <span className="rounded-full bg-emerald-100 px-3 py-1 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200">Best 3rd</span>
-          <span className="rounded-full bg-amber-100 px-3 py-1 text-amber-800 dark:bg-amber-400/15 dark:text-amber-200">Final</span>
-        </div>
-      </div>
       <div className="overflow-x-auto pb-2">
-        <div className="grid min-w-[1440px] grid-cols-[1.15fr_1fr_0.95fr_1.05fr_0.95fr_1fr_1.15fr] gap-4">
-          {columnGroups.map((group) => (
+        <div className="grid min-w-[1480px] grid-cols-[1.15fr_1fr_0.95fr_1.05fr_0.95fr_1fr_1.15fr] gap-5">
+          {columnGroups.map((group, columnIndex) => (
             <div className="flex flex-col gap-3" key={`${group.title}-${group.items.map((item) => item.matchNumber).join("-")}`}>
               <div className="sticky left-0 rounded-xl bg-ink px-3 py-2 text-center text-xs font-black uppercase tracking-wide text-white dark:bg-emerald-500/15 dark:text-emerald-100">
                 {group.title}
               </div>
-              <div className="grid gap-y-2" style={{ gridTemplateRows: "repeat(16, minmax(5.75rem, 5.75rem))" }}>
+              <div className="grid gap-y-3" style={{ gridTemplateRows: "repeat(16, minmax(7.25rem, 7.25rem))" }}>
                 {group.items.map((item) => (
                   <div
-                    className="flex items-center"
+                    className="relative flex items-center"
                     key={item.matchNumber}
                     style={{ gridRow: `${item.rowStart} / span ${item.rowSpan}` }}
                   >
+                    {columnIndex > 0 ? <span className="pointer-events-none absolute right-full top-1/2 h-px w-5 bg-emerald-300/40 dark:bg-emerald-300/25" /> : null}
                     <KnockoutSlotCard match={matchesByNumber[item.matchNumber]} slot={slotsByNumber[item.matchNumber]} />
+                    {columnIndex < columnGroups.length - 1 ? <span className="pointer-events-none absolute left-full top-1/2 h-px w-5 bg-emerald-300/40 dark:bg-emerald-300/25" /> : null}
                   </div>
                 ))}
               </div>
