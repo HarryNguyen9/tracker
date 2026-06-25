@@ -2937,7 +2937,7 @@ function KnockoutView({ matches }: { matches: WorldCupMatch[] }) {
   return (
     <section className="rounded-3xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
       <div className="overflow-x-auto pb-2">
-        <div className="relative grid" style={{ columnGap: knockoutColumnGap, gridTemplateColumns, minWidth: bracketWidth }}>
+        <div className="relative mx-auto grid" style={{ columnGap: knockoutColumnGap, gridTemplateColumns, minWidth: bracketWidth }}>
           <KnockoutConnectorLayer connections={knockoutConnections} height={bracketHeight} items={gridItems} width={bracketWidth} />
           {columnGroups.map((group) => (
             <div className="flex flex-col gap-3" key={`${group.title}-${group.items.map((item) => item.matchNumber).join("-")}`}>
@@ -3001,16 +3001,27 @@ function KnockoutConnectorLayer({
           return null;
         }
 
+        const startY = knockoutItemCenter(source);
+        const endY = knockoutItemCenter(target);
         const sourceStart = knockoutColumnStart(source.columnIndex);
         const targetStart = knockoutColumnStart(target.columnIndex);
         const sourceWidth = knockoutColumnWidths[source.columnIndex];
         const targetWidth = knockoutColumnWidths[target.columnIndex];
-        const movesRight = source.columnIndex < target.columnIndex;
-        const startX = movesRight ? sourceStart + sourceWidth : sourceStart;
-        const endX = movesRight ? targetStart : targetStart + targetWidth;
-        const startY = knockoutItemCenter(source);
-        const endY = knockoutItemCenter(target);
-        const midX = (startX + endX) / 2;
+        let startX: number;
+        let endX: number;
+        let midX: number;
+
+        if (source.columnIndex === target.columnIndex) {
+          const routeRight = connection.to === 104;
+          startX = routeRight ? sourceStart + sourceWidth : sourceStart;
+          endX = routeRight ? targetStart + targetWidth : targetStart;
+          midX = routeRight ? startX + knockoutColumnGap / 2 : startX - knockoutColumnGap / 2;
+        } else {
+          const movesRight = source.columnIndex < target.columnIndex;
+          startX = movesRight ? sourceStart + sourceWidth : sourceStart;
+          endX = movesRight ? targetStart : targetStart + targetWidth;
+          midX = (startX + endX) / 2;
+        }
 
         return (
           <path
