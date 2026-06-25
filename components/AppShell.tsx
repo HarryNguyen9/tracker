@@ -30,8 +30,10 @@ type KnockoutSlot = {
   away: string;
   tone?: "standard" | "final" | "third";
 };
-type KnockoutGridItem = { columnIndex: number; matchNumber: number; rowStart: number; rowSpan: number };
-type KnockoutConnection = { from: number; to: number };
+type KnockoutSide = "left" | "right";
+type KnockoutLane = { roundOf16: number; roundOf32: [number, number] };
+type KnockoutQuarterPath = { quarterfinal: number; lanes: [KnockoutLane, KnockoutLane] };
+type KnockoutSemiPath = { semifinal: number; quarters: [KnockoutQuarterPath, KnockoutQuarterPath] };
 
 const comboOutcomeLabels: Record<string, string> = { WIN: "Win", HALF_WIN: "Half Win", DRAW: "Draw", HALF_LOSE: "Half Lose", LOSE: "Lose" };
 const comboOutcomeOptions: ComboSelectionOutcome[] = ["WIN", "HALF_WIN", "DRAW", "HALF_LOSE", "LOSE"];
@@ -40,11 +42,6 @@ const resultLabels: Record<ResultType, string> = { win: "Win", loss: "Loss", dra
 const resultOptions: ResultType[] = ["win", "win_half", "draw", "loss_half", "loss"];
 const quickAmountIncrements = [1, 2, 5, 10, 20];
 type ComboResultChoice = ResultType | "";
-const knockoutRowHeight = 116;
-const knockoutRowGap = 12;
-const knockoutColumnGap = 28;
-const knockoutColumnWidths = [220, 200, 190, 220, 190, 200, 220];
-const knockoutHeaderOffset = 44;
 const knockoutSlots: KnockoutSlot[] = [
   { matchNumber: 73, round: "Round of 32", home: "Runner-up Group A", away: "Runner-up Group B" },
   { matchNumber: 74, round: "Round of 32", home: "Winner Group E", away: "Best 3rd Group A/B/C/D/F" },
@@ -79,39 +76,45 @@ const knockoutSlots: KnockoutSlot[] = [
   { matchNumber: 103, round: "Third Place", home: "Loser Match 101", away: "Loser Match 102", tone: "third" },
   { matchNumber: 104, round: "Final", home: "Winner Match 101", away: "Winner Match 102", tone: "final" },
 ];
-const knockoutConnections: KnockoutConnection[] = [
-  { from: 74, to: 89 },
-  { from: 77, to: 89 },
-  { from: 73, to: 90 },
-  { from: 75, to: 90 },
-  { from: 76, to: 91 },
-  { from: 78, to: 91 },
-  { from: 79, to: 92 },
-  { from: 80, to: 92 },
-  { from: 89, to: 97 },
-  { from: 90, to: 97 },
-  { from: 91, to: 99 },
-  { from: 92, to: 99 },
-  { from: 83, to: 93 },
-  { from: 84, to: 93 },
-  { from: 81, to: 94 },
-  { from: 82, to: 94 },
-  { from: 86, to: 95 },
-  { from: 88, to: 95 },
-  { from: 85, to: 96 },
-  { from: 87, to: 96 },
-  { from: 93, to: 98 },
-  { from: 94, to: 98 },
-  { from: 95, to: 100 },
-  { from: 96, to: 100 },
-  { from: 97, to: 101 },
-  { from: 98, to: 101 },
-  { from: 99, to: 102 },
-  { from: 100, to: 102 },
-  { from: 101, to: 104 },
-  { from: 102, to: 104 },
-  { from: 101, to: 103 },
-  { from: 102, to: 103 },
+const knockoutSemiPaths: KnockoutSemiPath[] = [
+  {
+    semifinal: 101,
+    quarters: [
+      {
+        quarterfinal: 97,
+        lanes: [
+          { roundOf16: 89, roundOf32: [74, 77] },
+          { roundOf16: 90, roundOf32: [73, 75] },
+        ],
+      },
+      {
+        quarterfinal: 98,
+        lanes: [
+          { roundOf16: 93, roundOf32: [83, 84] },
+          { roundOf16: 94, roundOf32: [81, 82] },
+        ],
+      },
+    ],
+  },
+  {
+    semifinal: 102,
+    quarters: [
+      {
+        quarterfinal: 99,
+        lanes: [
+          { roundOf16: 91, roundOf32: [76, 78] },
+          { roundOf16: 92, roundOf32: [79, 80] },
+        ],
+      },
+      {
+        quarterfinal: 100,
+        lanes: [
+          { roundOf16: 95, roundOf32: [86, 88] },
+          { roundOf16: 96, roundOf32: [85, 87] },
+        ],
+      },
+    ],
+  },
 ];
 
 function getExpectedReturn(amount: number, rate: number) {
@@ -2900,146 +2903,161 @@ function KnockoutView({ matches }: { matches: WorldCupMatch[] }) {
     return { ...items, [match.matchNumber]: match };
   }, {});
   const slotsByNumber = knockoutSlots.reduce<Record<number, KnockoutSlot>>((items, slot) => ({ ...items, [slot.matchNumber]: slot }), {});
-  const columnGroups: { items: KnockoutGridItem[]; title: string }[] = [
-    {
-      title: "Round of 32",
-      items: [73, 74, 75, 76, 77, 78, 79, 80].map((matchNumber, index) => ({ columnIndex: 0, matchNumber, rowStart: index * 2 + 1, rowSpan: 2 })),
-    },
-    {
-      title: "Round of 16",
-      items: [89, 90, 91, 92].map((matchNumber, index) => ({ columnIndex: 1, matchNumber, rowStart: index * 4 + 1, rowSpan: 4 })),
-    },
-    { title: "Quarterfinals", items: [97, 99].map((matchNumber, index) => ({ columnIndex: 2, matchNumber, rowStart: index * 8 + 1, rowSpan: 8 })) },
-    {
-      title: "Semifinals / Final",
-      items: [
-        { columnIndex: 3, matchNumber: 101, rowStart: 3, rowSpan: 3 },
-        { columnIndex: 3, matchNumber: 104, rowStart: 7, rowSpan: 3 },
-        { columnIndex: 3, matchNumber: 103, rowStart: 10, rowSpan: 3 },
-        { columnIndex: 3, matchNumber: 102, rowStart: 14, rowSpan: 3 },
-      ],
-    },
-    { title: "Quarterfinals", items: [98, 100].map((matchNumber, index) => ({ columnIndex: 4, matchNumber, rowStart: index * 8 + 1, rowSpan: 8 })) },
-    {
-      title: "Round of 16",
-      items: [93, 94, 95, 96].map((matchNumber, index) => ({ columnIndex: 5, matchNumber, rowStart: index * 4 + 1, rowSpan: 4 })),
-    },
-    {
-      title: "Round of 32",
-      items: [81, 82, 83, 84, 85, 86, 87, 88].map((matchNumber, index) => ({ columnIndex: 6, matchNumber, rowStart: index * 2 + 1, rowSpan: 2 })),
-    },
-  ];
-  const gridItems = columnGroups.flatMap((group) => group.items);
-  const bracketWidth = knockoutColumnWidths.reduce((sum, width) => sum + width, 0) + knockoutColumnGap * (knockoutColumnWidths.length - 1);
-  const bracketHeight = knockoutRowHeight * 16 + knockoutRowGap * 15;
-  const gridTemplateColumns = knockoutColumnWidths.map((width) => `${width}px`).join(" ");
+  const matchCard = (matchNumber: number, variant: "compact" | "target" = "compact") => (
+    <KnockoutSlotCard match={matchesByNumber[matchNumber]} slot={slotsByNumber[matchNumber]} variant={variant} />
+  );
+  const leftQuarters = knockoutSemiPaths.map((semiPath) => semiPath.quarters[0]);
+  const rightQuarters = knockoutSemiPaths.map((semiPath) => semiPath.quarters[1]);
 
   return (
     <section className="rounded-3xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
       <div className="overflow-x-auto pb-2">
-        <div className="relative mx-auto grid" style={{ columnGap: knockoutColumnGap, gridTemplateColumns, minWidth: bracketWidth }}>
-          <KnockoutConnectorLayer connections={knockoutConnections} height={bracketHeight} items={gridItems} width={bracketWidth} />
-          {columnGroups.map((group) => (
-            <div className="flex flex-col gap-3" key={`${group.title}-${group.items.map((item) => item.matchNumber).join("-")}`}>
-              <div className="sticky left-0 rounded-xl bg-ink px-3 py-2 text-center text-xs font-black uppercase tracking-wide text-white dark:bg-emerald-500/15 dark:text-emerald-100">
-                {group.title}
-              </div>
-              <div className="relative grid gap-y-3" style={{ gridTemplateRows: "repeat(16, minmax(7.25rem, 7.25rem))" }}>
-                {group.items.map((item) => (
-                  <div
-                    className="relative z-10 flex items-center"
-                    key={item.matchNumber}
-                    style={{ gridRow: `${item.rowStart} / span ${item.rowSpan}` }}
-                  >
-                    <KnockoutSlotCard match={matchesByNumber[item.matchNumber]} slot={slotsByNumber[item.matchNumber]} />
+        <div className="mx-auto grid min-w-[1800px] gap-3 rounded-[1.5rem] border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-[#121d19] xl:grid-cols-[1fr_320px_1fr]">
+          <div className="grid gap-3">
+            <KnockoutColumnHeader label="Left Bracket Paths" />
+            {leftQuarters.map((quarter) => (
+              <KnockoutQuarterPathView key={quarter.quarterfinal} matchCard={matchCard} quarter={quarter} side="left" />
+            ))}
+          </div>
+
+          <aside className="grid grid-rows-[auto_1fr] gap-3">
+            <KnockoutColumnHeader label="Final Stage" />
+            <div className="grid content-center gap-3">
+              <KnockoutCenterMatch label="Upper Semifinal" matchCard={matchCard} matchNumber={101} />
+              <section className="rounded-3xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-400/30 dark:bg-amber-400/10">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <p className="text-xs font-black uppercase tracking-wide text-amber-700 dark:text-amber-200">Finals Hub</p>
+                  <span className="rounded-full bg-amber-100 px-2 py-1 text-[0.68rem] font-black uppercase tracking-wide text-amber-800 dark:bg-amber-400/15 dark:text-amber-100">Center</span>
+                </div>
+                <div className="grid gap-3">
+                  <div className="rounded-2xl border border-amber-300 bg-amber-50 p-2 dark:border-amber-400/30 dark:bg-amber-400/10">
+                    <p className="mb-2 text-[0.68rem] font-black uppercase tracking-wide text-amber-700 dark:text-amber-200">Final</p>
+                    {matchCard(104, "target")}
                   </div>
-                ))}
-              </div>
+                  <div className="rounded-2xl border border-violet-200 bg-violet-50 p-2 dark:border-violet-400/30 dark:bg-violet-400/10">
+                    <p className="mb-2 text-[0.68rem] font-black uppercase tracking-wide text-violet-700 dark:text-violet-200">Third Place</p>
+                    {matchCard(103)}
+                  </div>
+                </div>
+              </section>
+              <KnockoutCenterMatch label="Lower Semifinal" matchCard={matchCard} matchNumber={102} />
             </div>
-          ))}
+          </aside>
+
+          <div className="grid gap-3">
+            <KnockoutColumnHeader label="Right Bracket Paths" />
+            {rightQuarters.map((quarter) => (
+              <KnockoutQuarterPathView key={quarter.quarterfinal} matchCard={matchCard} quarter={quarter} side="right" />
+            ))}
+          </div>
         </div>
       </div>
     </section>
   );
 }
 
-function knockoutItemCenter(item: { rowStart: number; rowSpan: number }) {
-  const top = (item.rowStart - 1) * (knockoutRowHeight + knockoutRowGap);
-  const height = item.rowSpan * knockoutRowHeight + (item.rowSpan - 1) * knockoutRowGap;
-  return knockoutHeaderOffset + top + height / 2;
-}
-
-function knockoutColumnStart(columnIndex: number) {
-  return knockoutColumnWidths.slice(0, columnIndex).reduce((sum, width) => sum + width, 0) + knockoutColumnGap * columnIndex;
-}
-
-function KnockoutConnectorLayer({
-  connections,
-  height,
-  items,
-  width,
-}: {
-  connections: KnockoutConnection[];
-  height: number;
-  items: KnockoutGridItem[];
-  width: number;
-}) {
-  const itemMap = Object.fromEntries(items.map((item) => [item.matchNumber, item]));
-
+function KnockoutColumnHeader({ label }: { label: string }) {
   return (
-    <svg
-      aria-hidden="true"
-      className="pointer-events-none absolute left-0 top-0 z-0 overflow-visible"
-      height={height + knockoutHeaderOffset}
-      viewBox={`0 0 ${width} ${height + knockoutHeaderOffset}`}
-      width={width}
-    >
-      {connections.map((connection) => {
-        const source = itemMap[connection.from];
-        const target = itemMap[connection.to];
-        if (!source || !target) {
-          return null;
-        }
-
-        const startY = knockoutItemCenter(source);
-        const endY = knockoutItemCenter(target);
-        const sourceStart = knockoutColumnStart(source.columnIndex);
-        const targetStart = knockoutColumnStart(target.columnIndex);
-        const sourceWidth = knockoutColumnWidths[source.columnIndex];
-        const targetWidth = knockoutColumnWidths[target.columnIndex];
-        let startX: number;
-        let endX: number;
-        let midX: number;
-
-        if (source.columnIndex === target.columnIndex) {
-          const routeRight = connection.to === 104;
-          startX = routeRight ? sourceStart + sourceWidth : sourceStart;
-          endX = routeRight ? targetStart + targetWidth : targetStart;
-          midX = routeRight ? startX + knockoutColumnGap / 2 : startX - knockoutColumnGap / 2;
-        } else {
-          const movesRight = source.columnIndex < target.columnIndex;
-          startX = movesRight ? sourceStart + sourceWidth : sourceStart;
-          endX = movesRight ? targetStart : targetStart + targetWidth;
-          midX = (startX + endX) / 2;
-        }
-
-        return (
-          <path
-            className="stroke-emerald-500/35 dark:stroke-emerald-300/30"
-            d={`M ${startX} ${startY} H ${midX} V ${endY} H ${endX}`}
-            fill="none"
-            key={`${connection.from}-${connection.to}`}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth="2"
-          />
-        );
-      })}
-    </svg>
+    <div className="rounded-2xl bg-emerald-700 px-3 py-2 text-center text-xs font-black uppercase tracking-wide text-white dark:bg-emerald-400/15 dark:text-emerald-100">
+      {label}
+    </div>
   );
 }
 
-function KnockoutSlotCard({ match, slot }: { match?: WorldCupMatch; slot: KnockoutSlot }) {
+function KnockoutCenterMatch({
+  label,
+  matchCard,
+  matchNumber,
+}: {
+  label: string;
+  matchCard: (matchNumber: number, variant?: "compact" | "target") => ReactNode;
+  matchNumber: number;
+}) {
+  return (
+    <section className="rounded-3xl border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-400/25 dark:bg-emerald-400/10">
+      <p className="mb-3 text-xs font-black uppercase tracking-wide text-emerald-700 dark:text-emerald-200">{label}</p>
+      {matchCard(matchNumber)}
+    </section>
+  );
+}
+
+function KnockoutQuarterPathView({
+  matchCard,
+  quarter,
+  side,
+}: {
+  matchCard: (matchNumber: number, variant?: "compact" | "target") => ReactNode;
+  quarter: KnockoutQuarterPath;
+  side: KnockoutSide;
+}) {
+  const laneList = (
+    <div className="grid gap-3">
+      <KnockoutLaneHeader side={side} />
+      {quarter.lanes.map((lane) => (
+        <KnockoutLaneRow key={lane.roundOf16} lane={lane} matchCard={matchCard} side={side} />
+      ))}
+    </div>
+  );
+  const quarterCard = <div className="flex items-center">{matchCard(quarter.quarterfinal, "target")}</div>;
+
+  return (
+    <article className="rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <p className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Quarterfinal</p>
+        <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200">M{quarter.quarterfinal}</span>
+      </div>
+      <div className={`grid gap-3 ${side === "right" ? "lg:grid-cols-[240px_1fr]" : "lg:grid-cols-[1fr_240px]"}`}>
+        {side === "right" ? quarterCard : laneList}
+        {side === "right" ? laneList : quarterCard}
+      </div>
+    </article>
+  );
+}
+
+function KnockoutLaneHeader({ side }: { side: KnockoutSide }) {
+  return (
+    <div className="hidden grid-cols-[1fr_auto_1fr] items-center gap-2 px-2 text-[0.68rem] font-black uppercase tracking-wide text-slate-400 dark:text-slate-500 lg:grid">
+      <span>{side === "right" ? "Round of 16" : "Round of 32"}</span>
+      <span className="w-8" />
+      <span className={side === "right" ? "text-right" : ""}>{side === "right" ? "Round of 32" : "Round of 16"}</span>
+    </div>
+  );
+}
+
+function KnockoutLaneRow({
+  lane,
+  matchCard,
+  side,
+}: {
+  lane: KnockoutLane;
+  matchCard: (matchNumber: number, variant?: "compact" | "target") => ReactNode;
+  side: KnockoutSide;
+}) {
+  const roundOf32Cards = (
+    <div className="grid gap-2">
+      {lane.roundOf32.map((matchNumber) => (
+        <div key={matchNumber}>{matchCard(matchNumber)}</div>
+      ))}
+    </div>
+  );
+  const roundOf16Card = <div>{matchCard(lane.roundOf16, "target")}</div>;
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-2 dark:border-white/10 dark:bg-[#121d19]">
+      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+        {side === "right" ? roundOf16Card : roundOf32Cards}
+        <div className="flex h-full min-h-28 items-center">
+          <div className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-black text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200">
+            {side === "right" ? "from" : "to"}
+          </div>
+        </div>
+        {side === "right" ? roundOf32Cards : roundOf16Card}
+      </div>
+    </div>
+  );
+}
+
+function KnockoutSlotCard({ match, slot, variant = "compact" }: { match?: WorldCupMatch; slot: KnockoutSlot; variant?: "compact" | "target" }) {
   const homeName = match?.homeTeam ?? slot.home;
   const awayName = match?.awayTeam ?? slot.away;
   const score = match && match.homeScore !== null && match.awayScore !== null ? `${match.homeScore} - ${match.awayScore}` : "vs";
@@ -3052,17 +3070,18 @@ function KnockoutSlotCard({ match, slot }: { match?: WorldCupMatch; slot: Knocko
         : "border-slate-200 bg-white dark:border-white/10 dark:bg-[#121d19]";
 
   return (
-    <article className={`w-full rounded-2xl border p-3 shadow-sm ${toneClass}`}>
+    <article className={`w-full rounded-2xl border shadow-sm ${variant === "target" ? "p-3" : "p-2"} ${toneClass}`}>
       <div className="mb-2 flex items-start justify-between gap-2">
         <div>
           <p className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">M{slot.matchNumber}</p>
           <p className="text-[0.68rem] font-bold text-slate-400 dark:text-slate-500">{slot.round}</p>
+          <p className="mt-1 text-[0.68rem] font-bold text-slate-400 dark:text-slate-500">{match?.kickoffAt ? `Kickoff ${formatScheduleDate(match.kickoffAt)}` : "Kickoff TBA"}</p>
         </div>
         <WorldCupStatusBadge status={match?.status ?? "scheduled"} />
       </div>
-      <div className="grid gap-2">
+      <div className={`${variant === "target" ? "grid gap-2" : "grid gap-1.5"}`}>
         <KnockoutTeam name={homeName} />
-        <div className="mx-auto rounded-xl bg-slate-100 px-3 py-1 text-sm font-black text-ink dark:bg-white/10 dark:text-white">{score}</div>
+        <div className="mx-auto rounded-xl bg-slate-100 px-3 py-1 text-xs font-black text-ink dark:bg-white/10 dark:text-white">{score}</div>
         <KnockoutTeam name={awayName} />
       </div>
       {isBestThirdSlot ? <p className="mt-2 text-center text-[0.68rem] font-bold text-emerald-700 dark:text-emerald-300">Best third-place path</p> : null}
