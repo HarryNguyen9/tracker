@@ -22,6 +22,14 @@ type GroupStanding = {
   goalDifference: number;
   points: number;
 };
+type KnockoutRound = "Round of 32" | "Round of 16" | "Quarterfinals" | "Semifinals" | "Third Place" | "Final";
+type KnockoutSlot = {
+  matchNumber: number;
+  round: KnockoutRound;
+  home: string;
+  away: string;
+  tone?: "standard" | "final" | "third";
+};
 
 const comboOutcomeLabels: Record<string, string> = { WIN: "Win", HALF_WIN: "Half Win", DRAW: "Draw", HALF_LOSE: "Half Lose", LOSE: "Lose" };
 const comboOutcomeOptions: ComboSelectionOutcome[] = ["WIN", "HALF_WIN", "DRAW", "HALF_LOSE", "LOSE"];
@@ -30,6 +38,40 @@ const resultLabels: Record<ResultType, string> = { win: "Win", loss: "Loss", dra
 const resultOptions: ResultType[] = ["win", "win_half", "draw", "loss_half", "loss"];
 const quickAmountIncrements = [1, 2, 5, 10, 20];
 type ComboResultChoice = ResultType | "";
+const knockoutSlots: KnockoutSlot[] = [
+  { matchNumber: 73, round: "Round of 32", home: "Runner-up Group A", away: "Runner-up Group B" },
+  { matchNumber: 74, round: "Round of 32", home: "Winner Group E", away: "Best 3rd Group A/B/C/D/F" },
+  { matchNumber: 75, round: "Round of 32", home: "Winner Group F", away: "Runner-up Group C" },
+  { matchNumber: 76, round: "Round of 32", home: "Winner Group C", away: "Runner-up Group F" },
+  { matchNumber: 77, round: "Round of 32", home: "Winner Group I", away: "Best 3rd Group C/D/F/G/H" },
+  { matchNumber: 78, round: "Round of 32", home: "Runner-up Group E", away: "Runner-up Group I" },
+  { matchNumber: 79, round: "Round of 32", home: "Winner Group A", away: "Best 3rd Group C/E/F/H/I" },
+  { matchNumber: 80, round: "Round of 32", home: "Winner Group L", away: "Best 3rd Group E/H/I/J/K" },
+  { matchNumber: 81, round: "Round of 32", home: "Winner Group D", away: "Best 3rd Group B/E/F/I/J" },
+  { matchNumber: 82, round: "Round of 32", home: "Winner Group G", away: "Best 3rd Group A/E/H/I/J" },
+  { matchNumber: 83, round: "Round of 32", home: "Runner-up Group K", away: "Runner-up Group L" },
+  { matchNumber: 84, round: "Round of 32", home: "Winner Group H", away: "Runner-up Group J" },
+  { matchNumber: 85, round: "Round of 32", home: "Winner Group B", away: "Best 3rd Group E/F/G/I/J" },
+  { matchNumber: 86, round: "Round of 32", home: "Winner Group J", away: "Runner-up Group H" },
+  { matchNumber: 87, round: "Round of 32", home: "Winner Group K", away: "Best 3rd Group D/E/I/J/L" },
+  { matchNumber: 88, round: "Round of 32", home: "Runner-up Group D", away: "Runner-up Group G" },
+  { matchNumber: 89, round: "Round of 16", home: "Winner Match 74", away: "Winner Match 77" },
+  { matchNumber: 90, round: "Round of 16", home: "Winner Match 73", away: "Winner Match 75" },
+  { matchNumber: 91, round: "Round of 16", home: "Winner Match 76", away: "Winner Match 78" },
+  { matchNumber: 92, round: "Round of 16", home: "Winner Match 79", away: "Winner Match 80" },
+  { matchNumber: 93, round: "Round of 16", home: "Winner Match 83", away: "Winner Match 84" },
+  { matchNumber: 94, round: "Round of 16", home: "Winner Match 81", away: "Winner Match 82" },
+  { matchNumber: 95, round: "Round of 16", home: "Winner Match 86", away: "Winner Match 88" },
+  { matchNumber: 96, round: "Round of 16", home: "Winner Match 85", away: "Winner Match 87" },
+  { matchNumber: 97, round: "Quarterfinals", home: "Winner Match 89", away: "Winner Match 90" },
+  { matchNumber: 98, round: "Quarterfinals", home: "Winner Match 93", away: "Winner Match 94" },
+  { matchNumber: 99, round: "Quarterfinals", home: "Winner Match 91", away: "Winner Match 92" },
+  { matchNumber: 100, round: "Quarterfinals", home: "Winner Match 95", away: "Winner Match 96" },
+  { matchNumber: 101, round: "Semifinals", home: "Winner Match 97", away: "Winner Match 98" },
+  { matchNumber: 102, round: "Semifinals", home: "Winner Match 99", away: "Winner Match 100" },
+  { matchNumber: 103, round: "Third Place", home: "Loser Match 101", away: "Loser Match 102", tone: "third" },
+  { matchNumber: 104, round: "Final", home: "Winner Match 101", away: "Winner Match 102", tone: "final" },
+];
 
 function getExpectedReturn(amount: number, rate: number) {
   return amount * rate;
@@ -1009,7 +1051,7 @@ export default function AppShell() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 px-4 py-5 text-ink transition-colors dark:text-slate-50 sm:px-6 lg:px-8">
+    <main className="mx-auto flex min-h-screen w-full max-w-[92rem] flex-col gap-6 px-4 py-5 text-ink transition-colors dark:text-slate-50 sm:px-6 lg:px-8 2xl:max-w-[104rem]">
       <header className="rounded-[1.75rem] border border-emerald-400/10 bg-ink p-6 text-white shadow-soft dark:border-emerald-300/10 dark:bg-[#0f1815]">
         <div className="flex flex-wrap items-start gap-3">
           <div className="min-w-0 flex-1">
@@ -1061,7 +1103,7 @@ export default function AppShell() {
         <Metric label="Pending Records" value={formatNumber(totalSummary.pendingCount)} />
       </section>
 
-      <section className="grid gap-5 lg:grid-cols-[0.95fr_1.35fr]">
+      <section className="grid gap-5 lg:grid-cols-[0.8fr_1.4fr] 2xl:grid-cols-[0.72fr_1.55fr]">
         <div className="rounded-[1.5rem] border border-white/80 bg-white/95 p-4 shadow-soft dark:border-white/10 dark:bg-[#121d19]/95">
           <div className="mb-4 flex items-center gap-3">
             <div>
@@ -2716,7 +2758,7 @@ function ScheduleDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end bg-ink/60 p-4 backdrop-blur-sm sm:items-center sm:justify-center">
-      <section className="max-h-[88vh] w-full overflow-hidden rounded-[1.5rem] border border-white/80 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-[#121d19] sm:max-w-4xl">
+      <section className="max-h-[88vh] w-full overflow-hidden rounded-[1.5rem] border border-white/80 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-[#121d19] sm:max-w-[92rem]">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="text-sm font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">World Cup 2026</p>
@@ -2742,22 +2784,20 @@ function ScheduleDialog({
 
         {error ? <StateBox tone="error" text={error} /> : null}
         {loading && matches.length === 0 ? <p className="mt-5 rounded-2xl bg-slate-100 p-4 text-sm font-semibold dark:bg-white/10">Loading schedule...</p> : null}
-        {!loading && matches.length === 0 ? <p className="mt-5 rounded-2xl bg-slate-100 p-4 text-sm font-semibold dark:bg-white/10">No World Cup matches loaded yet.</p> : null}
+        {!loading && matches.length === 0 && activeTab !== "knockout" ? <p className="mt-5 rounded-2xl bg-slate-100 p-4 text-sm font-semibold dark:bg-white/10">No World Cup matches loaded yet.</p> : null}
 
-        {matches.length > 0 ? (
-          <div className="mt-5 grid grid-cols-3 gap-2 rounded-2xl bg-slate-100 p-1 dark:bg-white/10">
-            {scheduleTabs.map((tab) => (
-              <button
-                className={`rounded-xl px-3 py-2 text-sm font-black transition ${activeTab === tab.id ? "bg-white text-emerald-700 shadow-sm dark:bg-[#0b1511] dark:text-emerald-300" : "text-slate-500 hover:text-ink dark:text-slate-400 dark:hover:text-white"}`}
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                type="button"
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-        ) : null}
+        <div className="mt-5 grid grid-cols-3 gap-2 rounded-2xl bg-slate-100 p-1 dark:bg-white/10">
+          {scheduleTabs.map((tab) => (
+            <button
+              className={`rounded-xl px-3 py-2 text-sm font-black transition ${activeTab === tab.id ? "bg-white text-emerald-700 shadow-sm dark:bg-[#0b1511] dark:text-emerald-300" : "text-slate-500 hover:text-ink dark:text-slate-400 dark:hover:text-white"}`}
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              type="button"
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
 
         <div className="mt-5 flex max-h-[64vh] flex-col gap-5 overflow-y-auto pr-1">
           {activeTab === "schedule" ? Object.entries(groupedMatches).map(([day, dayMatches]) => (
@@ -2812,56 +2852,96 @@ function ScheduleDialog({
 }
 
 function KnockoutView({ matches }: { matches: WorldCupMatch[] }) {
-  if (matches.length === 0) {
-    return <p className="rounded-2xl bg-slate-100 p-4 text-sm font-semibold dark:bg-white/10">No knockout matches loaded yet.</p>;
-  }
-
-  const matchesByStage = matches.reduce<Record<string, WorldCupMatch[]>>((groups, match) => {
-    const stage = cleanStage(match.stage);
-    groups[stage] = [...(groups[stage] ?? []), match];
-    return groups;
+  const matchesByNumber = matches.reduce<Record<number, WorldCupMatch>>((items, match) => {
+    if (match.matchNumber === null) {
+      return items;
+    }
+    return { ...items, [match.matchNumber]: match };
   }, {});
+  const slotsByNumber = knockoutSlots.reduce<Record<number, KnockoutSlot>>((items, slot) => ({ ...items, [slot.matchNumber]: slot }), {});
+  const columnGroups = [
+    { title: "Round of 32", slots: [73, 74, 75, 76, 77, 78, 79, 80] },
+    { title: "Round of 16", slots: [89, 90, 91, 92] },
+    { title: "Quarterfinals", slots: [97, 99] },
+    { title: "Semifinals / Final", slots: [101, 104, 103, 102] },
+    { title: "Quarterfinals", slots: [98, 100] },
+    { title: "Round of 16", slots: [93, 94, 95, 96] },
+    { title: "Round of 32", slots: [81, 82, 83, 84, 85, 86, 87, 88] },
+  ];
 
   return (
-    <>
-      {Object.entries(matchesByStage).map(([stage, stageMatches]) => (
-        <section key={stage}>
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <h3 className="text-sm font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">{stage}</h3>
-            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600 dark:bg-white/10 dark:text-slate-300">{stageMatches.length} matches</span>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {stageMatches.map((match) => (
-              <article className="rounded-3xl border border-slate-100 bg-slate-50 p-4 dark:border-white/10 dark:bg-white/[0.04]" key={match.id}>
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                    {match.kickoffAt ? formatScheduleDate(match.kickoffAt) : "Kickoff TBA"}
-                  </p>
-                  <WorldCupStatusBadge status={match.status} />
-                </div>
-                <div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-3">
-                  <KnockoutTeam align="right" name={match.homeTeam} />
-                  <div className="rounded-2xl bg-white px-4 py-3 text-center text-lg font-black shadow-sm dark:bg-[#121d19]">
-                    {match.homeScore === null || match.awayScore === null ? "vs" : `${match.homeScore} - ${match.awayScore}`}
-                  </div>
-                  <KnockoutTeam align="left" name={match.awayTeam} />
-                </div>
-                {match.winner ? <p className="mt-4 rounded-2xl bg-emerald-50 px-3 py-2 text-center text-sm font-bold text-emerald-800 dark:bg-emerald-400/10 dark:text-emerald-200">Winner: {match.winner}</p> : null}
-              </article>
-            ))}
-          </div>
-        </section>
-      ))}
-    </>
+    <section className="rounded-3xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3 rounded-2xl bg-white p-4 dark:bg-[#121d19]">
+        <div>
+          <h3 className="text-lg font-black">World Cup 2026 Knockout Bracket</h3>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-500 dark:text-slate-400">
+            Slots show qualification paths until teams are confirmed. Best third-place pairings are finalized after the group stage.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs font-bold">
+          <span className="rounded-full bg-blue-100 px-3 py-1 text-blue-800 dark:bg-blue-400/15 dark:text-blue-200">Winner / Runner-up</span>
+          <span className="rounded-full bg-emerald-100 px-3 py-1 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200">Best 3rd</span>
+          <span className="rounded-full bg-amber-100 px-3 py-1 text-amber-800 dark:bg-amber-400/15 dark:text-amber-200">Final</span>
+        </div>
+      </div>
+      <div className="overflow-x-auto pb-2">
+        <div className="grid min-w-[1320px] grid-cols-[1.15fr_1fr_0.95fr_1.05fr_0.95fr_1fr_1.15fr] gap-3">
+          {columnGroups.map((group) => (
+            <div className="flex flex-col gap-3" key={`${group.title}-${group.slots.join("-")}`}>
+              <div className="sticky left-0 rounded-xl bg-ink px-3 py-2 text-center text-xs font-black uppercase tracking-wide text-white dark:bg-emerald-500/15 dark:text-emerald-100">
+                {group.title}
+              </div>
+              <div className={`grid gap-3 ${group.slots.length <= 2 ? "content-center" : ""}`}>
+                {group.slots.map((matchNumber) => (
+                  <KnockoutSlotCard key={matchNumber} match={matchesByNumber[matchNumber]} slot={slotsByNumber[matchNumber]} />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }
 
-function KnockoutTeam({ align, name }: { align: "left" | "right"; name: string | null }) {
+function KnockoutSlotCard({ match, slot }: { match?: WorldCupMatch; slot: KnockoutSlot }) {
+  const homeName = match?.homeTeam ?? slot.home;
+  const awayName = match?.awayTeam ?? slot.away;
+  const score = match && match.homeScore !== null && match.awayScore !== null ? `${match.homeScore} - ${match.awayScore}` : "vs";
+  const isBestThirdSlot = slot.home.includes("Best 3rd") || slot.away.includes("Best 3rd");
+  const toneClass =
+    slot.tone === "final"
+      ? "border-amber-300 bg-amber-50 dark:border-amber-400/40 dark:bg-amber-400/10"
+      : slot.tone === "third"
+        ? "border-violet-200 bg-violet-50 dark:border-violet-400/30 dark:bg-violet-400/10"
+        : "border-slate-200 bg-white dark:border-white/10 dark:bg-[#121d19]";
+
   return (
-    <div className={`flex min-w-0 items-center gap-2 ${align === "right" ? "justify-end" : ""}`}>
-      {align === "left" ? <TeamFlag team={name} /> : null}
-      <p className={`min-w-0 break-words text-base font-black ${align === "right" ? "text-right" : ""}`}>{name ?? "TBA"}</p>
-      {align === "right" ? <TeamFlag team={name} /> : null}
+    <article className={`rounded-2xl border p-3 shadow-sm ${toneClass}`}>
+      <div className="mb-3 flex items-start justify-between gap-2">
+        <div>
+          <p className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">M{slot.matchNumber}</p>
+          <p className="text-[0.68rem] font-bold text-slate-400 dark:text-slate-500">{slot.round}</p>
+        </div>
+        <WorldCupStatusBadge status={match?.status ?? "scheduled"} />
+      </div>
+      <div className="grid gap-2">
+        <KnockoutTeam name={homeName} />
+        <div className="mx-auto rounded-xl bg-slate-100 px-3 py-1 text-sm font-black text-ink dark:bg-white/10 dark:text-white">{score}</div>
+        <KnockoutTeam name={awayName} />
+      </div>
+      {isBestThirdSlot ? <p className="mt-3 rounded-xl bg-emerald-50 px-2 py-1 text-center text-[0.68rem] font-bold text-emerald-800 dark:bg-emerald-400/10 dark:text-emerald-200">Depends on best third-place qualifiers</p> : null}
+      {match?.winner ? <p className="mt-3 rounded-xl bg-emerald-100 px-2 py-1 text-center text-xs font-bold text-emerald-900 dark:bg-emerald-400/15 dark:text-emerald-100">Winner: {match.winner}</p> : null}
+    </article>
+  );
+}
+
+function KnockoutTeam({ name }: { name: string }) {
+  const hasRealTeam = !name.includes("Group") && !name.includes("Match");
+  return (
+    <div className={`flex min-h-10 items-center gap-2 rounded-xl border px-2 py-2 ${name.includes("Best 3rd") ? "border-emerald-100 bg-emerald-50 text-emerald-900 dark:border-emerald-400/20 dark:bg-emerald-400/10 dark:text-emerald-100" : "border-slate-100 bg-slate-50 dark:border-white/10 dark:bg-white/[0.04]"}`}>
+      {hasRealTeam ? <TeamFlag team={name} /> : null}
+      <p className="min-w-0 break-words text-sm font-black">{name}</p>
     </div>
   );
 }
@@ -2938,7 +3018,7 @@ function TrashDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end bg-ink/60 p-4 backdrop-blur-sm sm:items-center sm:justify-center">
-      <section className="max-h-[86vh] w-full overflow-hidden rounded-[1.5rem] border border-white/80 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-[#121d19] sm:max-w-2xl">
+      <section className="max-h-[86vh] w-full overflow-hidden rounded-[1.5rem] border border-white/80 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-[#121d19] sm:max-w-5xl">
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-sm font-bold uppercase tracking-wide text-rose-700 dark:text-rose-300">Trash</p>
@@ -3025,7 +3105,7 @@ function FinalizedRecordsDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end bg-ink/60 p-4 backdrop-blur-sm sm:items-center sm:justify-center">
-      <section className="max-h-[86vh] w-full overflow-hidden rounded-[1.5rem] border border-white/80 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-[#121d19] sm:max-w-2xl">
+      <section className="max-h-[86vh] w-full overflow-hidden rounded-[1.5rem] border border-white/80 bg-white p-5 shadow-soft dark:border-white/10 dark:bg-[#121d19] sm:max-w-6xl">
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-sm font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Records</p>
