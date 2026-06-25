@@ -30,6 +30,8 @@ type KnockoutSlot = {
   away: string;
   tone?: "standard" | "final" | "third";
 };
+type KnockoutGridItem = { matchNumber: number; rowStart: number; rowSpan: number };
+type KnockoutConnector = { first: number; second: number; side: "left" | "right" };
 
 const comboOutcomeLabels: Record<string, string> = { WIN: "Win", HALF_WIN: "Half Win", DRAW: "Draw", HALF_LOSE: "Half Lose", LOSE: "Lose" };
 const comboOutcomeOptions: ComboSelectionOutcome[] = ["WIN", "HALF_WIN", "DRAW", "HALF_LOSE", "LOSE"];
@@ -38,6 +40,8 @@ const resultLabels: Record<ResultType, string> = { win: "Win", loss: "Loss", dra
 const resultOptions: ResultType[] = ["win", "win_half", "draw", "loss_half", "loss"];
 const quickAmountIncrements = [1, 2, 5, 10, 20];
 type ComboResultChoice = ResultType | "";
+const knockoutRowHeight = 116;
+const knockoutRowGap = 12;
 const knockoutSlots: KnockoutSlot[] = [
   { matchNumber: 73, round: "Round of 32", home: "Runner-up Group A", away: "Runner-up Group B" },
   { matchNumber: 74, round: "Round of 32", home: "Winner Group E", away: "Best 3rd Group A/B/C/D/F" },
@@ -1051,7 +1055,7 @@ export default function AppShell() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-[92rem] flex-col gap-6 px-4 py-5 text-ink transition-colors dark:text-slate-50 sm:px-6 lg:px-8 2xl:max-w-[104rem]">
+    <main className="mx-auto flex min-h-screen w-full max-w-[96vw] flex-col gap-6 px-4 py-5 text-ink transition-colors dark:text-slate-50 sm:px-5 lg:px-4 2xl:max-w-[98vw]">
       <header className="rounded-[1.75rem] border border-emerald-400/10 bg-ink p-6 text-white shadow-soft dark:border-emerald-300/10 dark:bg-[#0f1815]">
         <div className="flex flex-wrap items-start gap-3">
           <div className="min-w-0 flex-1">
@@ -2757,8 +2761,8 @@ function ScheduleDialog({
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end bg-ink/60 p-3 backdrop-blur-sm sm:items-center sm:justify-center">
-      <section className="max-h-[94vh] w-full overflow-hidden rounded-[1.5rem] border border-white/80 bg-white p-4 shadow-soft dark:border-white/10 dark:bg-[#121d19] sm:max-h-[96vh] sm:max-w-[94rem]">
+    <div className="fixed inset-0 z-50 flex items-end bg-ink/60 p-2 backdrop-blur-sm sm:items-center sm:justify-center lg:p-3">
+      <section className="max-h-[94vh] w-full overflow-hidden rounded-[1.5rem] border border-white/80 bg-white p-4 shadow-soft dark:border-white/10 dark:bg-[#121d19] sm:max-h-[96vh] sm:max-w-[98vw]">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="text-sm font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">World Cup 2026</p>
@@ -2859,9 +2863,25 @@ function KnockoutView({ matches }: { matches: WorldCupMatch[] }) {
     return { ...items, [match.matchNumber]: match };
   }, {});
   const slotsByNumber = knockoutSlots.reduce<Record<number, KnockoutSlot>>((items, slot) => ({ ...items, [slot.matchNumber]: slot }), {});
-  const columnGroups = [
-    { title: "Round of 32", items: [73, 74, 75, 76, 77, 78, 79, 80].map((matchNumber, index) => ({ matchNumber, rowStart: index * 2 + 1, rowSpan: 2 })) },
-    { title: "Round of 16", items: [89, 90, 91, 92].map((matchNumber, index) => ({ matchNumber, rowStart: index * 4 + 1, rowSpan: 4 })) },
+  const columnGroups: { connectors?: KnockoutConnector[]; items: KnockoutGridItem[]; title: string }[] = [
+    {
+      title: "Round of 32",
+      connectors: [
+        { first: 73, second: 74, side: "right" },
+        { first: 75, second: 76, side: "right" },
+        { first: 77, second: 78, side: "right" },
+        { first: 79, second: 80, side: "right" },
+      ],
+      items: [73, 74, 75, 76, 77, 78, 79, 80].map((matchNumber, index) => ({ matchNumber, rowStart: index * 2 + 1, rowSpan: 2 })),
+    },
+    {
+      title: "Round of 16",
+      connectors: [
+        { first: 89, second: 90, side: "right" },
+        { first: 91, second: 92, side: "right" },
+      ],
+      items: [89, 90, 91, 92].map((matchNumber, index) => ({ matchNumber, rowStart: index * 4 + 1, rowSpan: 4 })),
+    },
     { title: "Quarterfinals", items: [97, 99].map((matchNumber, index) => ({ matchNumber, rowStart: index * 8 + 1, rowSpan: 8 })) },
     {
       title: "Semifinals / Final",
@@ -2873,37 +2893,102 @@ function KnockoutView({ matches }: { matches: WorldCupMatch[] }) {
       ],
     },
     { title: "Quarterfinals", items: [98, 100].map((matchNumber, index) => ({ matchNumber, rowStart: index * 8 + 1, rowSpan: 8 })) },
-    { title: "Round of 16", items: [93, 94, 95, 96].map((matchNumber, index) => ({ matchNumber, rowStart: index * 4 + 1, rowSpan: 4 })) },
-    { title: "Round of 32", items: [81, 82, 83, 84, 85, 86, 87, 88].map((matchNumber, index) => ({ matchNumber, rowStart: index * 2 + 1, rowSpan: 2 })) },
+    {
+      title: "Round of 16",
+      connectors: [
+        { first: 93, second: 94, side: "left" },
+        { first: 95, second: 96, side: "left" },
+      ],
+      items: [93, 94, 95, 96].map((matchNumber, index) => ({ matchNumber, rowStart: index * 4 + 1, rowSpan: 4 })),
+    },
+    {
+      title: "Round of 32",
+      connectors: [
+        { first: 81, second: 82, side: "left" },
+        { first: 83, second: 84, side: "left" },
+        { first: 85, second: 86, side: "left" },
+        { first: 87, second: 88, side: "left" },
+      ],
+      items: [81, 82, 83, 84, 85, 86, 87, 88].map((matchNumber, index) => ({ matchNumber, rowStart: index * 2 + 1, rowSpan: 2 })),
+    },
   ];
 
   return (
     <section className="rounded-3xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
       <div className="overflow-x-auto pb-2">
         <div className="grid min-w-[1480px] grid-cols-[1.15fr_1fr_0.95fr_1.05fr_0.95fr_1fr_1.15fr] gap-5">
-          {columnGroups.map((group, columnIndex) => (
+          {columnGroups.map((group) => (
             <div className="flex flex-col gap-3" key={`${group.title}-${group.items.map((item) => item.matchNumber).join("-")}`}>
               <div className="sticky left-0 rounded-xl bg-ink px-3 py-2 text-center text-xs font-black uppercase tracking-wide text-white dark:bg-emerald-500/15 dark:text-emerald-100">
                 {group.title}
               </div>
-              <div className="grid gap-y-3" style={{ gridTemplateRows: "repeat(16, minmax(7.25rem, 7.25rem))" }}>
+              <div className="relative grid gap-y-3" style={{ gridTemplateRows: "repeat(16, minmax(7.25rem, 7.25rem))" }}>
                 {group.items.map((item) => (
                   <div
-                    className="relative flex items-center"
+                    className="relative z-10 flex items-center"
                     key={item.matchNumber}
                     style={{ gridRow: `${item.rowStart} / span ${item.rowSpan}` }}
                   >
-                    {columnIndex > 0 ? <span className="pointer-events-none absolute right-full top-1/2 h-px w-5 bg-emerald-300/40 dark:bg-emerald-300/25" /> : null}
                     <KnockoutSlotCard match={matchesByNumber[item.matchNumber]} slot={slotsByNumber[item.matchNumber]} />
-                    {columnIndex < columnGroups.length - 1 ? <span className="pointer-events-none absolute left-full top-1/2 h-px w-5 bg-emerald-300/40 dark:bg-emerald-300/25" /> : null}
                   </div>
                 ))}
+                {group.connectors ? <KnockoutConnectors connectors={group.connectors} items={group.items} /> : null}
               </div>
             </div>
           ))}
         </div>
       </div>
     </section>
+  );
+}
+
+function knockoutItemCenter(item: { rowStart: number; rowSpan: number }) {
+  const top = (item.rowStart - 1) * (knockoutRowHeight + knockoutRowGap);
+  const height = item.rowSpan * knockoutRowHeight + (item.rowSpan - 1) * knockoutRowGap;
+  return top + height / 2;
+}
+
+function KnockoutConnectors({
+  connectors,
+  items,
+}: {
+  connectors: KnockoutConnector[];
+  items: { matchNumber: number; rowStart: number; rowSpan: number }[];
+}) {
+  const itemMap = Object.fromEntries(items.map((item) => [item.matchNumber, item]));
+
+  return (
+    <>
+      {connectors.map((connector) => {
+        const first = itemMap[connector.first];
+        const second = itemMap[connector.second];
+        if (!first || !second) {
+          return null;
+        }
+
+        const firstCenter = knockoutItemCenter(first);
+        const secondCenter = knockoutItemCenter(second);
+        const top = Math.min(firstCenter, secondCenter);
+        const height = Math.abs(secondCenter - firstCenter);
+        const middle = height / 2;
+        const sideClass = connector.side === "right" ? "-right-5" : "-left-5";
+        const edgeClass = connector.side === "right" ? "right-0" : "left-0";
+
+        return (
+          <span
+            aria-hidden="true"
+            className={`pointer-events-none absolute ${sideClass} z-0 w-5`}
+            key={`${connector.first}-${connector.second}-${connector.side}`}
+            style={{ height, top }}
+          >
+            <span className={`absolute ${edgeClass} top-0 h-full w-px bg-emerald-300/35 dark:bg-emerald-300/25`} />
+            <span className={`absolute ${edgeClass} top-0 h-px w-5 bg-emerald-300/35 dark:bg-emerald-300/25`} />
+            <span className={`absolute ${edgeClass} bottom-0 h-px w-5 bg-emerald-300/35 dark:bg-emerald-300/25`} />
+            <span className={`absolute ${edgeClass} h-px w-5 bg-emerald-300/60 dark:bg-emerald-300/40`} style={{ top: middle }} />
+          </span>
+        );
+      })}
+    </>
   );
 }
 
