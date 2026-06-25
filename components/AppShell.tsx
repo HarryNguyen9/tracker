@@ -30,8 +30,8 @@ type KnockoutSlot = {
   away: string;
   tone?: "standard" | "final" | "third";
 };
-type KnockoutGridItem = { matchNumber: number; rowStart: number; rowSpan: number };
-type KnockoutConnector = { first: number; second: number; side: "left" | "right" };
+type KnockoutGridItem = { columnIndex: number; matchNumber: number; rowStart: number; rowSpan: number };
+type KnockoutConnection = { from: number; to: number };
 
 const comboOutcomeLabels: Record<string, string> = { WIN: "Win", HALF_WIN: "Half Win", DRAW: "Draw", HALF_LOSE: "Half Lose", LOSE: "Lose" };
 const comboOutcomeOptions: ComboSelectionOutcome[] = ["WIN", "HALF_WIN", "DRAW", "HALF_LOSE", "LOSE"];
@@ -42,6 +42,9 @@ const quickAmountIncrements = [1, 2, 5, 10, 20];
 type ComboResultChoice = ResultType | "";
 const knockoutRowHeight = 116;
 const knockoutRowGap = 12;
+const knockoutColumnGap = 28;
+const knockoutColumnWidths = [220, 200, 190, 220, 190, 200, 220];
+const knockoutHeaderOffset = 44;
 const knockoutSlots: KnockoutSlot[] = [
   { matchNumber: 73, round: "Round of 32", home: "Runner-up Group A", away: "Runner-up Group B" },
   { matchNumber: 74, round: "Round of 32", home: "Winner Group E", away: "Best 3rd Group A/B/C/D/F" },
@@ -75,6 +78,40 @@ const knockoutSlots: KnockoutSlot[] = [
   { matchNumber: 102, round: "Semifinals", home: "Winner Match 99", away: "Winner Match 100" },
   { matchNumber: 103, round: "Third Place", home: "Loser Match 101", away: "Loser Match 102", tone: "third" },
   { matchNumber: 104, round: "Final", home: "Winner Match 101", away: "Winner Match 102", tone: "final" },
+];
+const knockoutConnections: KnockoutConnection[] = [
+  { from: 74, to: 89 },
+  { from: 77, to: 89 },
+  { from: 73, to: 90 },
+  { from: 75, to: 90 },
+  { from: 76, to: 91 },
+  { from: 78, to: 91 },
+  { from: 79, to: 92 },
+  { from: 80, to: 92 },
+  { from: 89, to: 97 },
+  { from: 90, to: 97 },
+  { from: 91, to: 99 },
+  { from: 92, to: 99 },
+  { from: 83, to: 93 },
+  { from: 84, to: 93 },
+  { from: 81, to: 94 },
+  { from: 82, to: 94 },
+  { from: 86, to: 95 },
+  { from: 88, to: 95 },
+  { from: 85, to: 96 },
+  { from: 87, to: 96 },
+  { from: 93, to: 98 },
+  { from: 94, to: 98 },
+  { from: 95, to: 100 },
+  { from: 96, to: 100 },
+  { from: 97, to: 101 },
+  { from: 98, to: 101 },
+  { from: 99, to: 102 },
+  { from: 100, to: 102 },
+  { from: 101, to: 104 },
+  { from: 102, to: 104 },
+  { from: 101, to: 103 },
+  { from: 102, to: 103 },
 ];
 
 function getExpectedReturn(amount: number, rate: number) {
@@ -2863,60 +2900,45 @@ function KnockoutView({ matches }: { matches: WorldCupMatch[] }) {
     return { ...items, [match.matchNumber]: match };
   }, {});
   const slotsByNumber = knockoutSlots.reduce<Record<number, KnockoutSlot>>((items, slot) => ({ ...items, [slot.matchNumber]: slot }), {});
-  const columnGroups: { connectors?: KnockoutConnector[]; items: KnockoutGridItem[]; title: string }[] = [
+  const columnGroups: { items: KnockoutGridItem[]; title: string }[] = [
     {
       title: "Round of 32",
-      connectors: [
-        { first: 73, second: 74, side: "right" },
-        { first: 75, second: 76, side: "right" },
-        { first: 77, second: 78, side: "right" },
-        { first: 79, second: 80, side: "right" },
-      ],
-      items: [73, 74, 75, 76, 77, 78, 79, 80].map((matchNumber, index) => ({ matchNumber, rowStart: index * 2 + 1, rowSpan: 2 })),
+      items: [73, 74, 75, 76, 77, 78, 79, 80].map((matchNumber, index) => ({ columnIndex: 0, matchNumber, rowStart: index * 2 + 1, rowSpan: 2 })),
     },
     {
       title: "Round of 16",
-      connectors: [
-        { first: 89, second: 90, side: "right" },
-        { first: 91, second: 92, side: "right" },
-      ],
-      items: [89, 90, 91, 92].map((matchNumber, index) => ({ matchNumber, rowStart: index * 4 + 1, rowSpan: 4 })),
+      items: [89, 90, 91, 92].map((matchNumber, index) => ({ columnIndex: 1, matchNumber, rowStart: index * 4 + 1, rowSpan: 4 })),
     },
-    { title: "Quarterfinals", items: [97, 99].map((matchNumber, index) => ({ matchNumber, rowStart: index * 8 + 1, rowSpan: 8 })) },
+    { title: "Quarterfinals", items: [97, 99].map((matchNumber, index) => ({ columnIndex: 2, matchNumber, rowStart: index * 8 + 1, rowSpan: 8 })) },
     {
       title: "Semifinals / Final",
       items: [
-        { matchNumber: 101, rowStart: 3, rowSpan: 3 },
-        { matchNumber: 104, rowStart: 7, rowSpan: 3 },
-        { matchNumber: 103, rowStart: 10, rowSpan: 3 },
-        { matchNumber: 102, rowStart: 14, rowSpan: 3 },
+        { columnIndex: 3, matchNumber: 101, rowStart: 3, rowSpan: 3 },
+        { columnIndex: 3, matchNumber: 104, rowStart: 7, rowSpan: 3 },
+        { columnIndex: 3, matchNumber: 103, rowStart: 10, rowSpan: 3 },
+        { columnIndex: 3, matchNumber: 102, rowStart: 14, rowSpan: 3 },
       ],
     },
-    { title: "Quarterfinals", items: [98, 100].map((matchNumber, index) => ({ matchNumber, rowStart: index * 8 + 1, rowSpan: 8 })) },
+    { title: "Quarterfinals", items: [98, 100].map((matchNumber, index) => ({ columnIndex: 4, matchNumber, rowStart: index * 8 + 1, rowSpan: 8 })) },
     {
       title: "Round of 16",
-      connectors: [
-        { first: 93, second: 94, side: "left" },
-        { first: 95, second: 96, side: "left" },
-      ],
-      items: [93, 94, 95, 96].map((matchNumber, index) => ({ matchNumber, rowStart: index * 4 + 1, rowSpan: 4 })),
+      items: [93, 94, 95, 96].map((matchNumber, index) => ({ columnIndex: 5, matchNumber, rowStart: index * 4 + 1, rowSpan: 4 })),
     },
     {
       title: "Round of 32",
-      connectors: [
-        { first: 81, second: 82, side: "left" },
-        { first: 83, second: 84, side: "left" },
-        { first: 85, second: 86, side: "left" },
-        { first: 87, second: 88, side: "left" },
-      ],
-      items: [81, 82, 83, 84, 85, 86, 87, 88].map((matchNumber, index) => ({ matchNumber, rowStart: index * 2 + 1, rowSpan: 2 })),
+      items: [81, 82, 83, 84, 85, 86, 87, 88].map((matchNumber, index) => ({ columnIndex: 6, matchNumber, rowStart: index * 2 + 1, rowSpan: 2 })),
     },
   ];
+  const gridItems = columnGroups.flatMap((group) => group.items);
+  const bracketWidth = knockoutColumnWidths.reduce((sum, width) => sum + width, 0) + knockoutColumnGap * (knockoutColumnWidths.length - 1);
+  const bracketHeight = knockoutRowHeight * 16 + knockoutRowGap * 15;
+  const gridTemplateColumns = knockoutColumnWidths.map((width) => `${width}px`).join(" ");
 
   return (
     <section className="rounded-3xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
       <div className="overflow-x-auto pb-2">
-        <div className="grid min-w-[1480px] grid-cols-[1.15fr_1fr_0.95fr_1.05fr_0.95fr_1fr_1.15fr] gap-5">
+        <div className="relative grid" style={{ columnGap: knockoutColumnGap, gridTemplateColumns, minWidth: bracketWidth }}>
+          <KnockoutConnectorLayer connections={knockoutConnections} height={bracketHeight} items={gridItems} width={bracketWidth} />
           {columnGroups.map((group) => (
             <div className="flex flex-col gap-3" key={`${group.title}-${group.items.map((item) => item.matchNumber).join("-")}`}>
               <div className="sticky left-0 rounded-xl bg-ink px-3 py-2 text-center text-xs font-black uppercase tracking-wide text-white dark:bg-emerald-500/15 dark:text-emerald-100">
@@ -2932,7 +2954,6 @@ function KnockoutView({ matches }: { matches: WorldCupMatch[] }) {
                     <KnockoutSlotCard match={matchesByNumber[item.matchNumber]} slot={slotsByNumber[item.matchNumber]} />
                   </div>
                 ))}
-                {group.connectors ? <KnockoutConnectors connectors={group.connectors} items={group.items} /> : null}
               </div>
             </div>
           ))}
@@ -2945,50 +2966,65 @@ function KnockoutView({ matches }: { matches: WorldCupMatch[] }) {
 function knockoutItemCenter(item: { rowStart: number; rowSpan: number }) {
   const top = (item.rowStart - 1) * (knockoutRowHeight + knockoutRowGap);
   const height = item.rowSpan * knockoutRowHeight + (item.rowSpan - 1) * knockoutRowGap;
-  return top + height / 2;
+  return knockoutHeaderOffset + top + height / 2;
 }
 
-function KnockoutConnectors({
-  connectors,
+function knockoutColumnStart(columnIndex: number) {
+  return knockoutColumnWidths.slice(0, columnIndex).reduce((sum, width) => sum + width, 0) + knockoutColumnGap * columnIndex;
+}
+
+function KnockoutConnectorLayer({
+  connections,
+  height,
   items,
+  width,
 }: {
-  connectors: KnockoutConnector[];
-  items: { matchNumber: number; rowStart: number; rowSpan: number }[];
+  connections: KnockoutConnection[];
+  height: number;
+  items: KnockoutGridItem[];
+  width: number;
 }) {
   const itemMap = Object.fromEntries(items.map((item) => [item.matchNumber, item]));
 
   return (
-    <>
-      {connectors.map((connector) => {
-        const first = itemMap[connector.first];
-        const second = itemMap[connector.second];
-        if (!first || !second) {
+    <svg
+      aria-hidden="true"
+      className="pointer-events-none absolute left-0 top-0 z-0 overflow-visible"
+      height={height + knockoutHeaderOffset}
+      viewBox={`0 0 ${width} ${height + knockoutHeaderOffset}`}
+      width={width}
+    >
+      {connections.map((connection) => {
+        const source = itemMap[connection.from];
+        const target = itemMap[connection.to];
+        if (!source || !target) {
           return null;
         }
 
-        const firstCenter = knockoutItemCenter(first);
-        const secondCenter = knockoutItemCenter(second);
-        const top = Math.min(firstCenter, secondCenter);
-        const height = Math.abs(secondCenter - firstCenter);
-        const middle = height / 2;
-        const sideClass = connector.side === "right" ? "-right-5" : "-left-5";
-        const edgeClass = connector.side === "right" ? "right-0" : "left-0";
+        const sourceStart = knockoutColumnStart(source.columnIndex);
+        const targetStart = knockoutColumnStart(target.columnIndex);
+        const sourceWidth = knockoutColumnWidths[source.columnIndex];
+        const targetWidth = knockoutColumnWidths[target.columnIndex];
+        const movesRight = source.columnIndex < target.columnIndex;
+        const startX = movesRight ? sourceStart + sourceWidth : sourceStart;
+        const endX = movesRight ? targetStart : targetStart + targetWidth;
+        const startY = knockoutItemCenter(source);
+        const endY = knockoutItemCenter(target);
+        const midX = (startX + endX) / 2;
 
         return (
-          <span
-            aria-hidden="true"
-            className={`pointer-events-none absolute ${sideClass} z-0 w-5`}
-            key={`${connector.first}-${connector.second}-${connector.side}`}
-            style={{ height, top }}
-          >
-            <span className={`absolute ${edgeClass} top-0 h-full w-px bg-emerald-300/35 dark:bg-emerald-300/25`} />
-            <span className={`absolute ${edgeClass} top-0 h-px w-5 bg-emerald-300/35 dark:bg-emerald-300/25`} />
-            <span className={`absolute ${edgeClass} bottom-0 h-px w-5 bg-emerald-300/35 dark:bg-emerald-300/25`} />
-            <span className={`absolute ${edgeClass} h-px w-5 bg-emerald-300/60 dark:bg-emerald-300/40`} style={{ top: middle }} />
-          </span>
+          <path
+            className="stroke-emerald-500/35 dark:stroke-emerald-300/30"
+            d={`M ${startX} ${startY} H ${midX} V ${endY} H ${endX}`}
+            fill="none"
+            key={`${connection.from}-${connection.to}`}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="2"
+          />
         );
       })}
-    </>
+    </svg>
   );
 }
 
