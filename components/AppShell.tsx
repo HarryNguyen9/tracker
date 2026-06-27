@@ -1166,17 +1166,17 @@ export default function AppShell() {
           </button>
 
           {addPlayerOpen && editMode ? (
-            <form className="mb-5 flex gap-2 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5" onSubmit={createPlayer}>
+            <form className="mb-5 grid w-full min-w-0 grid-cols-2 gap-2 rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5 sm:grid-cols-[minmax(0,1fr)_auto_auto]" onSubmit={createPlayer}>
               <input
-                className="min-h-12 flex-1 rounded-2xl border border-slate-200 bg-white px-4 outline-none focus:border-emerald-500 dark:border-white/10 dark:bg-[#0d1512]"
+                className="col-span-2 min-h-12 w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-4 outline-none focus:border-emerald-500 dark:border-white/10 dark:bg-[#0d1512] sm:col-span-1"
                 onChange={(event) => setPlayerName(event.target.value)}
                 placeholder="Player name"
                 value={playerName}
               />
-              <button className="rounded-2xl bg-ink px-4 font-bold text-white active:scale-95" disabled={busy} type="submit">
+              <button className="min-h-12 rounded-2xl bg-ink px-4 font-bold text-white active:scale-95" disabled={busy} type="submit">
                 Save
               </button>
-              <button className="rounded-2xl bg-slate-100 px-4 font-bold dark:bg-white/10" onClick={() => setAddPlayerOpen(false)} type="button">
+              <button className="min-h-12 rounded-2xl bg-slate-100 px-4 font-bold dark:bg-white/10" onClick={() => setAddPlayerOpen(false)} type="button">
                 Cancel
               </button>
             </form>
@@ -2912,7 +2912,7 @@ function KnockoutView({ matches }: { matches: WorldCupMatch[] }) {
   return (
     <section className="rounded-3xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
       <div className="overflow-x-auto pb-2">
-        <div className="mx-auto grid min-w-[1800px] gap-3 rounded-[1.5rem] border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-[#121d19] xl:grid-cols-[1fr_320px_1fr]">
+        <div className="mx-auto grid w-full min-w-0 gap-3 rounded-[1.5rem] border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-[#121d19] xl:min-w-[1800px] xl:grid-cols-[1fr_320px_1fr]">
           <div className="grid gap-3">
             <KnockoutColumnHeader label="Left Bracket Paths" />
             {leftQuarters.map((quarter) => (
@@ -2991,14 +2991,14 @@ function KnockoutQuarterPathView({
   side: KnockoutSide;
 }) {
   const laneList = (
-    <div className="grid gap-3">
+    <div className={`grid gap-3 ${side === "right" ? "order-1 lg:order-2" : "order-1"}`}>
       <KnockoutLaneHeader side={side} />
       {quarter.lanes.map((lane) => (
         <KnockoutLaneRow key={lane.roundOf16} lane={lane} matchCard={matchCard} side={side} />
       ))}
     </div>
   );
-  const quarterCard = <div className="flex items-center">{matchCard(quarter.quarterfinal, "target")}</div>;
+  const quarterCard = <div className={`flex items-center ${side === "right" ? "order-2 lg:order-1" : "order-2"}`}>{matchCard(quarter.quarterfinal, "target")}</div>;
 
   return (
     <article className="rounded-2xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
@@ -3044,9 +3044,9 @@ function KnockoutLaneRow({
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-2 dark:border-white/10 dark:bg-[#121d19]">
-      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+      <div className="grid gap-2 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
         {side === "right" ? roundOf16Card : roundOf32Cards}
-        <div className="flex h-full min-h-28 items-center">
+        <div className="flex items-center justify-center sm:h-full sm:min-h-28">
           <div className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-black text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200">
             {side === "right" ? "from" : "to"}
           </div>
